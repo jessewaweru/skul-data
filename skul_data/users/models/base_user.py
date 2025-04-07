@@ -22,6 +22,10 @@ class User(AbstractUser):
     )
     # Unique tracking ID for all users
     user_tag = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    email = models.EmailField(unique=True)
+
+    USERNAME_FIELD = "email"
+    REQUIRED_FIELDS = ["username"]
 
     def __str__(self):
         return self.username
