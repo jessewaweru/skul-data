@@ -1,7 +1,32 @@
-# Virtual environment (venv)
+# Virtual environment
 venv/
 env/
 
 # Environment variables
 .env
 *.env
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Django migrations (do NOT ignore these, but this is just to clarify if you have any other temporary files)
+*.log
+
+# Local PostgreSQL database files (you are using a local PostgreSQL database, not SQLite)
+*.pgsql
+*.pgdata
+pg_data/
+
+# Docker-related files (exclude unnecessary ones, but don't ignore Dockerfile and docker-compose.yml)
+*.docker
+docker-compose.override.yml
+*.swp
+
+# IDE and editor-specific files (if you use an IDE like VSCode, PyCharm, etc.)
+.vscode/
+.idea/
+
+# System files
+.DS_Store  # macOS system file
+Thumbs.db  # Windows system file

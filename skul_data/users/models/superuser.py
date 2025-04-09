@@ -8,7 +8,7 @@ class SuperUser(models.Model):
     )
     school_name = models.CharField(max_length=250)
     school_code = models.CharField(max_length=50, unique=True)
-    phone_number = models.CharField(max_length=20)
+    phone_number = models.CharField(max_length=20, default="0700000000")
 
     # Remove is_superuser - use user.is_superuser instead
 

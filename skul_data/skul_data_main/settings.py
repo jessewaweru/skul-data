@@ -39,6 +39,7 @@ PROJECT_APPS = [
     "skul_data.students",
     "skul_data.dashboards",
     "skul_data.action_logs",
+    "skul_data.scheduler",
 ]
 
 THIRD_PARTY_APPS = [
