@@ -1,5 +1,6 @@
 django == 5.1.7
 djangorestframework == 3.15.2
+drf-yasg == 1.21.10
 channels == 4.2.0
 psycopg2 == 2.9.10
 Pillow == 11.1.0
