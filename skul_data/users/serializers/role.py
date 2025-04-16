@@ -10,11 +10,14 @@ class PermissionSerializer(serializers.ModelSerializer):
 
 
 class RoleSerializer(serializers.ModelSerializer):
-    permissions = PermissionSerializer(many=True, read_only=False)
+    permissions = serializers.PrimaryKeyRelatedField(
+        queryset=Permission.objects.all(), many=True
+    )
 
     class Meta:
         model = Role
         fields = ["id", "name", "role_type", "permissions", "school"]
+        read_only_fields = ["school"]
 
     def create(self, validated_data):
         permissions_data = validated_data.pop("permissions", [])

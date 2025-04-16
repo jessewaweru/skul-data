@@ -2,6 +2,14 @@ from django.db import models
 from django.contrib.auth.models import Permission
 
 
+class Permission(models.Model):
+    code = models.CharField(max_length=100, unique=True)
+    name = models.CharField(max_length=255)
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+
 class Role(models.Model):
     ROLE_TYPES = [
         ("SYSTEM", "System Defined"),
@@ -18,9 +26,7 @@ class Role(models.Model):
     )
 
     class Meta:
-        permissions = [
-            ("manage_roles", "Can create, edit and delete roles"),
-        ]
+        unique_together = ("name", "school")
 
     def __str__(self):
         return f"{self.name} ({self.school.name})"
