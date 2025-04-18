@@ -1,6 +1,8 @@
 from pathlib import Path
 from decouple import config
 from datetime import timedelta
+from celery.schedules import crontab
+
 
 AUTH_USER_MODEL = "users.User"
 
@@ -46,6 +48,8 @@ THIRD_PARTY_APPS = [
     "rest_framework",
     "rest_framework_simplejwt",
     "drf_yasg",
+    "django_celery_results",
+    "django_celery_beat",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + PROJECT_APPS + THIRD_PARTY_APPS
@@ -180,4 +184,41 @@ SWAGGER_SETTINGS = {
 
 REDOC_SETTINGS = {
     "LAZY_RENDERING": False,
+}
+
+# Celery Configuration
+CELERY_BROKER_URL = config("CELERY_BROKER_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = "django-db"  # Using django_celery_results
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = "Africa/Nairobi"  # Set your timezone
+CELERY_ENABLE_UTC = True
+CELERY_TASK_TRACK_STARTED = True
+CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes timeout for tasks
+CELERY_RESULT_EXPIRES = 7 * 24 * 60 * 60  # 7 days expiration for results
+
+# Celery Beat Configuration
+CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+CELERY_BEAT_SCHEDULE = {
+    "process-pending-report-requests": {
+        "task": "reports.tasks.process_pending_report_requests",
+        "schedule": 300.0,  # Every 5 minutes
+        "options": {
+            "expires": 60.0,  # Cancel if not run within 1 minute
+        },
+    },
+    "generate-term-end-reports": {
+        "task": "reports.tasks.generate_term_end_reports",
+        "schedule": {  # First day of every month at 3am
+            "month": "*",
+            "day": "1",
+            "hour": "3",
+            "minute": "0",
+        },
+    },
+    "cleanup-old-reports": {
+        "task": "reports.tasks.cleanup_old_reports",
+        "schedule": crontab(hour=4, minute=30),  # Daily at 4:30am
+    },
 }

@@ -13,3 +13,10 @@ psycopg2-binary == 2.9.10
 ua-parser == 1.0.1
 user-agents == 2.2.0
 django-filter == 25.1
+celery == 5.5.1
+django-celery-beat == 2.7.0
+django-celery-results == 2.6.0
+redis == 5.2.1
+flower == 2.0.1
+pandas == 2.2.3
+weasyprint == 65.1

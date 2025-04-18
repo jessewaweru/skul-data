@@ -13,7 +13,7 @@ class Student(models.Model):
     student_class = models.ForeignKey(
         "schools.SchoolClass", on_delete=models.SET_NULL, null=True, blank=True
     )
-
+    subjects = models.ManyToManyField("students.Student", related_name="students")
     parent = models.ForeignKey(
         "users.Parent", on_delete=models.CASCADE, related_name="students"
     )
@@ -27,3 +27,12 @@ class Student(models.Model):
 
     def __str__(self):
         return f"{self.first_name}{self.last_name} - {self.student_class}"
+
+
+class Subject(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    code = models.CharField(max_length=10, unique=True, help_text="E.g., MATH101")
+    description = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return self.name
