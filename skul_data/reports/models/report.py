@@ -4,7 +4,8 @@ from django.db import models
 from django.db.models import JSONField
 from django.core.exceptions import ValidationError
 from django.utils import timezone
-from skul_data.schools.models.school import School, SchoolClass
+from skul_data.schools.models.school import School
+from skul_data.schools.models.schoolclass import SchoolClass
 from skul_data.students.models.student import Student
 from skul_data.users.models.teacher import Teacher
 from skul_data.users.models.base_user import User

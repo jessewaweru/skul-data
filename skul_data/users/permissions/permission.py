@@ -70,3 +70,11 @@ ACCESS_ALL = "access_all"
 VIEW_OWN_CHILDREN = "view_own_children"
 VIEW_CHILD_CLASS_PERFORMANCE = "view_child_class_performance"
 VIEW_EVENTS = "view_events"
+
+# --- School Class Permissions ---
+MANAGE_CLASSES = "manage_classes"
+VIEW_CLASSES = "view_classes"
+MANAGE_CLASS_DOCUMENTS = "manage_class_documents"
+VIEW_CLASS_DOCUMENTS = "view_class_documents"
+MANAGE_ATTENDANCE = "manage_attendance"
+VIEW_ATTENDANCE = "view_attendance"

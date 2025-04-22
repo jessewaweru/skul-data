@@ -2,7 +2,7 @@ from rest_framework import serializers
 from skul_data.reports.models.report import ReportTemplate
 from skul_data.schools.serializers.school import SchoolSerializer
 from skul_data.users.serializers.base_user import BaseUserSerializer
-from skul_data.schools.serializers.school import SchoolClassSerializer
+from skul_data.schools.serializers.schoolclass import SchoolClassSerializer
 from skul_data.users.serializers.teacher import TeacherSerializer
 from skul_data.students.serializers.student import StudentSerializer
 from skul_data.reports.models.report import GeneratedReport

@@ -2,7 +2,7 @@ import uuid
 import os
 from django.db import models
 from skul_data.schools.models.school import School
-from skul_data.schools.models.school import SchoolClass
+from skul_data.schools.models.schoolclass import SchoolClass
 from skul_data.users.models.base_user import User
 from django.core.exceptions import ValidationError
 from django.utils import timezone
