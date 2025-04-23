@@ -10,7 +10,7 @@ class Parent(models.Model):
     school = models.ForeignKey(
         "schools.School", on_delete=models.CASCADE, related_name="parents"
     )
-    children = models.ManyToManyField("students.Student", related_name="guardians")
+    children = models.ManyToManyField("students.Student", related_name="parents")
 
     def __str__(self):
         return f"{self.user.username} - Parent"
