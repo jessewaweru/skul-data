@@ -5,7 +5,8 @@ from skul_data.schools.models.schoolclass import (
     ClassDocument,
     ClassAttendance,
 )
-from skul_data.users.serializers.teacher import TeacherSerializer
+
+# from skul_data.users.serializers.teacher import TeacherSerializer
 from skul_data.students.serializers.student import StudentSerializer, SubjectSerializer
 from skul_data.users.serializers.base_user import BaseUserSerializer
 from skul_data.schools.serializers.schoolstream import SchoolStreamSerializer
@@ -14,7 +15,11 @@ from skul_data.schools.models.schoolstream import SchoolStream
 
 class SchoolClassSerializer(serializers.ModelSerializer):
 
-    class_teacher = TeacherSerializer(read_only=True)
+    # class_teacher = TeacherSerializer(read_only=True)
+    class_teacher_id = serializers.PrimaryKeyRelatedField(
+        read_only=True, source="class_teacher"
+    )
+    class_teacher_name = serializers.SerializerMethodField()
     students = StudentSerializer(many=True, read_only=True)
     subjects = SubjectSerializer(many=True, read_only=True)
     student_count = serializers.IntegerField(read_only=True)
@@ -61,6 +66,11 @@ class SchoolClassSerializer(serializers.ModelSerializer):
         if value and value.school != self.context["request"].user.school:
             raise serializers.ValidationError("Invalid stream for this school")
         return value
+
+    def get_class_teacher_name(self, obj):
+        if obj.class_teacher:
+            return f"{obj.class_teacher.user.first_name} {obj.class_teacher.user.last_name}"
+        return None
 
 
 class SchoolClassCreateSerializer(serializers.ModelSerializer):

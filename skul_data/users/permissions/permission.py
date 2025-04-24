@@ -78,3 +78,13 @@ MANAGE_CLASS_DOCUMENTS = "manage_class_documents"
 VIEW_CLASS_DOCUMENTS = "view_class_documents"
 MANAGE_ATTENDANCE = "manage_attendance"
 VIEW_ATTENDANCE = "view_attendance"
+
+# --- Teacher Permissions ---
+VIEW_TEACHER_PROFILE = "view_teacher_profile"
+MANAGE_TEACHERS = "manage_teachers"
+VIEW_TEACHER_ATTENDANCE = "view_teacher_attendance"
+MANAGE_TEACHER_ATTENDANCE = "manage_teacher_attendance"
+VIEW_TEACHER_DOCUMENTS = "view_teacher_documents"
+MANAGE_TEACHER_DOCUMENTS = "manage_teacher_documents"
+VIEW_TEACHER_WORKLOAD = "view_teacher_workload"
+MANAGE_TEACHER_WORKLOAD = "manage_teacher_workload"
