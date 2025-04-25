@@ -11,8 +11,6 @@ from skul_data.schools.models.school import School
 from skul_data.users.models.parent import Parent
 from skul_data.users.models.teacher import Teacher
 from skul_data.users.serializers.parent import ParentSerializer
-
-# from skul_data.users.serializers.teacher import TeacherSerializer
 from django.utils import timezone
 
 

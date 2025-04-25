@@ -24,12 +24,10 @@ class TeacherSerializer(serializers.ModelSerializer):
     phone_number = serializers.CharField(source="user.phone_number")
     last_login = serializers.DateTimeField(source="user.last_login", read_only=True)
     subjects_taught = SubjectSerializer(many=True, read_only=True)
-    # assigned_classes = SchoolClassSerializer(many=True, read_only=True)
     assigned_classes_ids = serializers.PrimaryKeyRelatedField(
         source="assigned_classes", many=True, read_only=True
     )
     active_students_count = serializers.IntegerField(read_only=True)
-    # current_classes = SchoolClassSerializer(many=True, read_only=True)
     current_classes_ids = serializers.PrimaryKeyRelatedField(
         source="current_classes", many=True, read_only=True
     )

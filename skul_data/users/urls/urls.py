@@ -1,5 +1,9 @@
 from django.urls import path, include
-from skul_data.users.views.parent import ParentCreateView
+from skul_data.users.views.parent import (
+    ParentViewSet,
+    ParentNotificationViewSet,
+    ParentStatusChangeViewSet,
+)
 from skul_data.users.views.superuser import SuperUserCreateView
 from skul_data.users.views.auth import SchoolRegisterAPIView, SchoolLoginAPIView
 from rest_framework.routers import DefaultRouter
@@ -26,7 +30,13 @@ router.register(
 router.register(
     r"teacher-documents", TeacherDocumentViewSet, basename="teacher-document"
 )
-
+router.register(r"parents", ParentViewSet, basename="parent")
+router.register(
+    r"parent-notifications", ParentNotificationViewSet, basename="parent-notification"
+)
+router.register(
+    r"parent-status-changes", ParentStatusChangeViewSet, basename="parent-status-change"
+)
 
 urlpatterns = [
     path(
@@ -35,7 +45,6 @@ urlpatterns = [
         name="superuser-register",
     ),
     path("", include(router.urls)),
-    path("register/parent/", ParentCreateView.as_view(), name="parent-register"),
     path("register/", SchoolRegisterAPIView.as_view(), name="school-register"),
     path("login/", SchoolLoginAPIView.as_view(), name="login"),
 ]
