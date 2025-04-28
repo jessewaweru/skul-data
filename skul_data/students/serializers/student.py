@@ -12,6 +12,7 @@ from skul_data.users.models.parent import Parent
 from skul_data.users.models.teacher import Teacher
 from skul_data.users.serializers.parent import ParentSerializer
 from django.utils import timezone
+from skul_data.students.models.student import AttendanceStatus, StudentAttendance
 
 
 class StudentDocumentSerializer(serializers.ModelSerializer):
@@ -236,3 +237,85 @@ class StudentSerializer(serializers.ModelSerializer):
 
     def get_address(self, obj):
         return obj.address
+
+
+class StudentAttendanceSerializer(serializers.ModelSerializer):
+    student_name = serializers.SerializerMethodField()
+    recorded_by_name = serializers.SerializerMethodField()
+    class_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StudentAttendance
+        fields = [
+            "id",
+            "student",
+            "student_name",
+            "date",
+            "status",
+            "recorded_by",
+            "recorded_by_name",
+            "reason",
+            "time_in",
+            "notes",
+            "created_at",
+            "updated_at",
+            "class_name",
+        ]
+        read_only_fields = ["created_at", "updated_at"]
+
+    def get_student_name(self, obj):
+        return obj.student.full_name
+
+    def get_recorded_by_name(self, obj):
+        if obj.recorded_by:
+            return f"{obj.recorded_by.first_name} {obj.recorded_by.last_name}"
+        return None
+
+    def get_class_name(self, obj):
+        if obj.student.student_class:
+            return obj.student.student_class.name
+        return None
+
+    def validate(self, data):
+        # Validate that date is not in the future
+        if data.get("date") and data["date"] > timezone.now().date():
+            raise serializers.ValidationError(
+                {"date": "Attendance date cannot be in the future"}
+            )
+
+        # Validate that time_in is provided for LATE status
+        if data.get("status") == AttendanceStatus.LATE and not data.get("time_in"):
+            raise serializers.ValidationError(
+                {"time_in": "Time in is required for late attendance"}
+            )
+
+        # Validate that reason is provided for EXCUSED status
+        if data.get("status") == AttendanceStatus.EXCUSED and not data.get("reason"):
+            raise serializers.ValidationError(
+                {"reason": "Reason is required for excused absence"}
+            )
+
+        return data
+
+
+class BulkAttendanceSerializer(serializers.Serializer):
+    date = serializers.DateField(default=timezone.now)
+    class_id = serializers.IntegerField(required=False)
+    student_statuses = serializers.ListField(
+        child=serializers.DictField(child=serializers.CharField())
+    )
+
+    def validate_student_statuses(self, value):
+        for student_status in value:
+            if "student_id" not in student_status:
+                raise serializers.ValidationError(
+                    "student_id is required for each entry"
+                )
+            if "status" not in student_status:
+                raise serializers.ValidationError("status is required for each entry")
+            if student_status["status"] not in dict(AttendanceStatus.choices):
+                raise serializers.ValidationError(
+                    f"Invalid status: {student_status['status']}"
+                )
+
+        return value

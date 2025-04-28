@@ -17,7 +17,7 @@ from skul_data.reports.models.report import (
 )
 from rest_framework.exceptions import PermissionDenied
 from skul_data.users.models.base_user import User
-from skul_data.schools.models.school import SchoolClass
+from skul_data.schools.models.schoolclass import SchoolClass
 from skul_data.reports.models.academic_record import AcademicRecord, TeacherComment
 from django.conf import settings
 

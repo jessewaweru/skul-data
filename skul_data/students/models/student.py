@@ -256,3 +256,89 @@ class Subject(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class AttendanceStatus(models.TextChoices):
+    PRESENT = "PRESENT", "Present"
+    ABSENT = "ABSENT", "Absent"
+    LATE = "LATE", "Late"
+    EXCUSED = "EXCUSED", "Excused Absence"
+
+
+class StudentAttendance(models.Model):
+    student = models.ForeignKey(
+        "students.Student", on_delete=models.CASCADE, related_name="attendance_records"
+    )
+    date = models.DateField(default=timezone.now)
+    status = models.CharField(
+        max_length=10,
+        choices=AttendanceStatus.choices,
+        default=AttendanceStatus.PRESENT,
+    )
+    recorded_by = models.ForeignKey(
+        "users.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="recorded_attendance",
+    )
+    reason = models.TextField(
+        blank=True, null=True, help_text="Reason for absence or late arrival"
+    )
+    time_in = models.TimeField(
+        null=True, blank=True, help_text="Time student arrived if late"
+    )
+    notes = models.TextField(blank=True, null=True)
+
+    # For administrative purposes
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-date", "student__first_name"]
+        unique_together = ["student", "date"]
+        indexes = [
+            models.Index(fields=["student", "date"]),
+            models.Index(fields=["date", "status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.student.full_name} - {self.date} - {self.status}"
+
+    def mark_present(self, recorded_by=None):
+        """Mark student as present"""
+        self.status = AttendanceStatus.PRESENT
+        self.recorded_by = recorded_by
+        self.save()
+
+    def mark_absent(self, reason=None, recorded_by=None):
+        """Mark student as absent"""
+        self.status = AttendanceStatus.ABSENT
+        self.reason = reason
+        self.recorded_by = recorded_by
+        self.save()
+
+    def mark_late(self, time_in, reason=None, recorded_by=None):
+        """Mark student as late"""
+        self.status = AttendanceStatus.LATE
+        self.time_in = time_in
+        self.reason = reason
+        self.recorded_by = recorded_by
+        self.save()
+
+    def mark_excused(self, reason, recorded_by=None):
+        """Mark student as excused"""
+        self.status = AttendanceStatus.EXCUSED
+        self.reason = reason
+        self.recorded_by = recorded_by
+        self.save()
+
+    @property
+    def is_present(self):
+        return self.status == AttendanceStatus.PRESENT
+
+    @property
+    def is_absent(self):
+        return (
+            self.status == AttendanceStatus.ABSENT
+            or self.status == AttendanceStatus.EXCUSED
+        )
