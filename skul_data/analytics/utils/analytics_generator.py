@@ -15,11 +15,6 @@ from django.db.models import (
 )
 from django.utils import timezone
 from datetime import timedelta
-from rest_framework import viewsets, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from django_filters.rest_framework import DjangoFilterBackend
 from skul_data.reports.models.academic_record import AcademicRecord
 from skul_data.schools.models.schoolclass import ClassAttendance
 from skul_data.schools.models.schoolclass import SchoolClass

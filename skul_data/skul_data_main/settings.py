@@ -70,6 +70,8 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "skul_data.action_logs.middleware.action_log.ActionLogMiddleware",
+    "skul_data.users.models.base_user.CurrentUserMiddleware",
 ]
 
 ROOT_URLCONF = "skul_data.skul_data_main.urls"

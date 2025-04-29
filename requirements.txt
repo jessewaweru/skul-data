@@ -20,3 +20,4 @@ redis == 5.2.1
 flower == 2.0.1
 pandas == 2.2.3
 weasyprint == 65.1
+icalendar == 6.1.3

@@ -1,7 +1,14 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.utils.deprecation import MiddlewareMixin
 import uuid
 from skul_data.users.models.role import Role
+
+
+class CurrentUserMiddleware(MiddlewareMixin):
+    def process_request(self, request):
+        if request.user.is_authenticated:
+            User.set_current_user(request.user)
 
 
 class User(AbstractUser):
@@ -28,6 +35,27 @@ class User(AbstractUser):
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["username"]
+
+    _current_user = None
+
+    @classmethod
+    def set_current_user(cls, user):
+        cls._current_user = user
+
+    @classmethod
+    def get_current_user(cls):
+        return cls._current_user
+
+    def save(self, *args, **kwargs):
+        # Track changed fields
+        if self.pk:
+            old = User.objects.get(pk=self.pk)
+            self._changed_fields = [
+                field.name
+                for field in self._meta.fields
+                if getattr(old, field.name) != getattr(self, field.name)
+            ]
+        super().save(*args, **kwargs)
 
     # Add this method to check permissions
     def has_perm(self, perm, obj=None):
