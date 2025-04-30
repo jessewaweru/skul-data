@@ -4,7 +4,6 @@ from skul_data.users.views.parent import (
     ParentNotificationViewSet,
     ParentStatusChangeViewSet,
 )
-from skul_data.users.views.superuser import SuperUserCreateView
 from skul_data.users.views.auth import SchoolRegisterAPIView, SchoolLoginAPIView
 from rest_framework.routers import DefaultRouter
 from skul_data.users.views.role import RoleViewSet
@@ -15,6 +14,7 @@ from skul_data.users.views.teacher import (
     TeacherAttendanceViewSet,
     TeacherDocumentViewSet,
 )
+from skul_data.users.views.school_admin import SchoolAdminViewSet
 
 
 router = DefaultRouter()
@@ -37,13 +37,9 @@ router.register(
 router.register(
     r"parent-status-changes", ParentStatusChangeViewSet, basename="parent-status-change"
 )
+router.register(r"school-admin", SchoolAdminViewSet, basename="school-admin")
 
 urlpatterns = [
-    path(
-        "register/superuser/",
-        SuperUserCreateView.as_view(),
-        name="superuser-register",
-    ),
     path("", include(router.urls)),
     path("register/", SchoolRegisterAPIView.as_view(), name="school-register"),
     path("login/", SchoolLoginAPIView.as_view(), name="login"),

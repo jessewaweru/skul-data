@@ -41,7 +41,7 @@ class SchoolEvent(models.Model):
         User, on_delete=models.CASCADE, related_name="created_events"
     )
     school = models.ForeignKey(
-        "schools.School", on_delete=models.CASCADE, related_name="events"
+        "schools.School", on_delete=models.CASCADE, related_name="events", default=None
     )
 
     # Specific target users

@@ -1,58 +1,78 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from django.contrib.auth import authenticate
-from skul_data.users.models.superuser import SuperUser
 from skul_data.schools.models.school import School
+from skul_data.users.models.school_admin import SchoolAdmin
 
 
 class SchoolRegisterSerializer(serializers.ModelSerializer):
-    school_name = serializers.CharField(write_only=True)
-    school_level = serializers.CharField(write_only=True)
-    physical_address = serializers.CharField(write_only=True)
-    phone_number = serializers.CharField()
-    confirm_password = serializers.CharField(write_only=True)
+    school_name = serializers.CharField(write_only=True, required=True)
+    school_type = serializers.ChoiceField(
+        choices=School.SCHOOL_TYPES, write_only=True, default="PRI"
+    )
+    address = serializers.CharField(write_only=True)
+    city = serializers.CharField(write_only=True)
+    country = serializers.CharField(write_only=True, default="Kenya")
+    phone = serializers.CharField(write_only=True)
+    email = serializers.EmailField(write_only=True)
+    website = serializers.URLField(write_only=True, required=False)
     password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+    first_name = serializers.CharField(write_only=True)
+    last_name = serializers.CharField(write_only=True)
 
     class Meta:
         model = User
         fields = [
+            "school_name",
+            "school_type",
+            "address",
+            "city",
+            "country",
+            "phone",
             "email",
+            "website",
             "password",
             "confirm_password",
-            "school_name",
-            "school_level",
-            "physical_address",
+            "first_name",
+            "last_name",
         ]
 
     def validate(self, data):
         if data["password"] != data["confirm_password"]:
-            raise serializers.ValidationError("passwords do not match")
+            raise serializers.ValidationError("Passwords do not match")
+        if User.objects.filter(email=data["email"]).exists():
+            raise serializers.ValidationError("Email already exists")
         return data
 
     def create(self, validated_data):
-        password = validated_data.pop("password")
-        validated_data.pop("confirm_password")
-
-        email = validated_data.pop("email")
-        school_name = validated_data.pop("school_name")
-        school_level = validated_data.pop("school_level")
-        address = validated_data.pop("physical_address")
-
-        user = User.objects.create_user(username=email, email=email, password=password)
-        school_code = f"{school_name[:3].upper()}{User.objects.count() + 1:03d}"
-        superuser_profile = SuperUser.objects.create(
-            user=user, school_name=school_name, school_code=school_code
+        # Create User
+        user = User.objects.create_user(
+            username=validated_data["email"],
+            email=validated_data["email"],
+            password=validated_data["password"],
+            first_name=validated_data["first_name"],
+            last_name=validated_data["last_name"],
+            user_type=User.SCHOOL_ADMIN,
+            is_staff=True,
         )
 
-        # Next we create a corresponding School record
-        School.objects.create(
-            name=school_name,
-            level=school_level,
-            contact_phone=validated_data["phone_number"],
-            location=address,
-            code=school_code,
-            superuser_profile=superuser_profile,
+        # Create School
+        school = School.objects.create(
+            name=validated_data["school_name"],
+            type=validated_data["school_type"],
+            address=validated_data["address"],
+            city=validated_data["city"],
+            country=validated_data["country"],
+            phone=validated_data["phone"],
+            email=validated_data["email"],
+            website=validated_data.get("website", ""),
+            superuser=user,
         )
+
+        # Create SchoolAdmin profile
+        SchoolAdmin.objects.create(user=user, school=school, is_primary=True)
+
         return user
 
 

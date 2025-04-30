@@ -1,6 +1,24 @@
 from rest_framework.permissions import BasePermission, SAFE_METHODS
+from skul_data.users.models.base_user import User
 
 # === BROAD ROLE CHECKS ===
+
+
+# New permission classes
+class IsSchoolAdmin(BasePermission):
+    def has_permission(self, request, view):
+        return (
+            request.user.is_authenticated
+            and request.user.user_type == User.SCHOOL_ADMIN
+        )
+
+
+class IsPrimaryAdmin(BasePermission):
+    def has_permission(self, request, view):
+        return (
+            request.user.is_authenticated
+            and request.user.school_admin_profile.is_primary
+        )
 
 
 class IsAdministrator(BasePermission):
@@ -154,4 +172,11 @@ DEFAULT_PERMISSIONS = [
     (VIEW_CALENDAR, "Can view the school calendar"),
     (EXPORT_CALENDAR, "Can export calendar data"),
     # ... keep your existing permissions ...
+]
+
+SCHOOL_ADMIN_PERMISSIONS = [
+    ("manage_school", "Manage school settings"),
+    ("manage_users", "Create/manage school users"),
+    ("manage_academics", "Manage academic structure"),
+    ("view_reports", "View all school reports"),
 ]

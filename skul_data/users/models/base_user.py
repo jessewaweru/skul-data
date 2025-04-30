@@ -12,13 +12,13 @@ class CurrentUserMiddleware(MiddlewareMixin):
 
 
 class User(AbstractUser):
-    SCHOOL_SUPERUSER = "school_superuser"
+    SCHOOL_ADMIN = "school_admin"
     TEACHER = "teacher"
     PARENT = "parent"
     OTHER = "other"
 
     USER_TYPE_CHOICES = [
-        (SCHOOL_SUPERUSER, "School Superuser"),
+        (SCHOOL_ADMIN, "School Administrator"),
         (TEACHER, "Teacher"),
         (PARENT, "Parent"),
         (OTHER, "Other"),
@@ -26,7 +26,7 @@ class User(AbstractUser):
     user_type = models.CharField(
         max_length=20,
         choices=USER_TYPE_CHOICES,
-        default=SCHOOL_SUPERUSER,
+        default=SCHOOL_ADMIN,
     )
     # Unique tracking ID for all users
     user_tag = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
