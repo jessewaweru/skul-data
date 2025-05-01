@@ -19,7 +19,6 @@ class SchoolAdminSerializer(serializers.ModelSerializer):
             "school",
             "school_name",
             "is_primary",
-            "created_at",
         ]
         extra_kwargs = {"user": {"write_only": True}, "school": {"write_only": True}}
 

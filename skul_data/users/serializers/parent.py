@@ -117,7 +117,6 @@ class ParentNotificationPreferenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Parent
         fields = [
-            "receive_sms_notifications",
             "receive_email_notifications",
             "preferred_language",
         ]

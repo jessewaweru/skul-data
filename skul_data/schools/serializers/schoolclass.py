@@ -14,7 +14,6 @@ from skul_data.schools.models.schoolstream import SchoolStream
 
 
 class SchoolClassSerializer(serializers.ModelSerializer):
-
     # class_teacher = TeacherSerializer(read_only=True)
     class_teacher_id = serializers.PrimaryKeyRelatedField(
         read_only=True, source="class_teacher"
@@ -43,6 +42,8 @@ class SchoolClassSerializer(serializers.ModelSerializer):
             "stream_id",
             "level",
             "class_teacher",
+            "class_teacher_id",
+            "class_teacher_name",
             "school",
             "students",
             "subjects",
