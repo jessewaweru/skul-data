@@ -1,6 +1,10 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from skul_data.schools.views.school import SchoolViewSet
+from skul_data.schools.views.school import (
+    SchoolViewSet,
+    SchoolSubscriptionViewSet,
+    SecurityLogViewSet,
+)
 from skul_data.schools.views.schoolclass import (
     SchoolClassViewSet,
     ClassTimetableViewSet,
@@ -19,6 +23,8 @@ router.register(r"class-documents", ClassDocumentViewSet, basename="class-docume
 router.register(
     r"class-attendances", ClassAttendanceViewSet, basename="class-attendance"
 )
+router.register(r"subscriptions", SchoolSubscriptionViewSet, basename="subscription")
+router.register(r"security-logs", SecurityLogViewSet, basename="securitylog")
 
 urlpatterns = [
     path("", include(router.urls)),

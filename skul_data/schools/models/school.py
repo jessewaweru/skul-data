@@ -2,6 +2,7 @@ from django.db import models
 from django.conf import settings
 from skul_data.students.models.student import Student
 import random
+from datetime import timedelta
 
 
 class School(models.Model):
@@ -59,3 +60,89 @@ class School(models.Model):
         if not self.code:
             self.code = f"{self.name[:3].upper()}{random.randint(100,999)}"
         super().save(*args, **kwargs)
+
+
+class SchoolSubscription(models.Model):
+    SUBSCRIPTION_PLANS = [
+        ("BASIC", "Basic"),
+        ("STANDARD", "Standard"),
+        ("ADVANCED", "Advanced"),
+    ]
+
+    PAYMENT_METHODS = [
+        ("MPESA", "M-Pesa"),
+        ("CARD", "Credit/Debit Card"),
+        ("BANK", "Bank Transfer"),
+    ]
+
+    STATUS_CHOICES = [
+        ("ACTIVE", "Active"),
+        ("PENDING", "Pending Payment"),
+        ("EXPIRED", "Expired"),
+        ("CANCELLED", "Cancelled"),
+    ]
+
+    school = models.OneToOneField(
+        School, on_delete=models.CASCADE, related_name="subscription"
+    )
+    plan = models.CharField(max_length=20, choices=SUBSCRIPTION_PLANS, default="BASIC")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    auto_renew = models.BooleanField(default=True)
+    last_payment_date = models.DateField(null=True, blank=True)
+    next_payment_date = models.DateField(null=True, blank=True)
+    payment_method = models.CharField(
+        max_length=20, choices=PAYMENT_METHODS, default="MPESA"
+    )
+
+    class Meta:
+        ordering = ["-end_date"]
+
+    def __str__(self):
+        return f"{self.school.name} - {self.get_plan_display()} ({self.status})"
+
+    def save(self, *args, **kwargs):
+        if not self.pk:  # New subscription
+            if self.plan == "BASIC":
+                default_duration = 30  # days
+            elif self.plan == "STANDARD":
+                default_duration = 365  # days
+            else:  # ADVANCED
+                default_duration = 365  # days
+
+            from django.utils import timezone
+
+            self.start_date = timezone.now().date()
+            self.end_date = self.start_date + timedelta(days=default_duration)
+            self.next_payment_date = self.end_date - timedelta(
+                days=7
+            )  # Notify 1 week before
+
+        super().save(*args, **kwargs)
+
+
+class SecurityLog(models.Model):
+    ACTION_TYPES = [
+        ("LOGIN", "User Login"),
+        ("LOGOUT", "User Logout"),
+        ("PASSWORD_CHANGE", "Password Changed"),
+        ("PROFILE_UPDATE", "Profile Updated"),
+        ("DEVICE_CHANGE", "New Device Login"),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="security_logs"
+    )
+    action_type = models.CharField(max_length=20, choices=ACTION_TYPES)
+    ip_address = models.GenericIPAddressField()
+    user_agent = models.CharField(max_length=255)
+    location = models.CharField(max_length=100, blank=True, null=True)
+    timestamp = models.DateTimeField(auto_now_add=True)
+    details = models.JSONField(default=dict)
+
+    class Meta:
+        ordering = ["-timestamp"]
+
+    def __str__(self):
+        return f"{self.user} - {self.get_action_type_display()} at {self.timestamp}"
