@@ -1,5 +1,7 @@
 from rest_framework import generics, permissions, status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.generics import CreateAPIView
 from django.db import models
 from django.utils import timezone
 from django.db.models import Q
@@ -13,6 +15,7 @@ from skul_data.scheduler.serializers.scheduler import (
 )
 from django.contrib.auth import get_user_model
 from rest_framework.views import APIView
+from skul_data.users.permissions.permission import CanManageEvent
 
 
 User = get_user_model()
@@ -21,16 +24,6 @@ User = get_user_model()
 class IsSuperUser(permissions.BasePermission):
     def has_permission(self, request, view):
         return request.user.is_authenticated and request.user.is_superuser
-
-
-# 🆕 Create new event (superuser only)
-# class SchoolEventCreateView(generics.CreateAPIView):
-#     queryset = SchoolEvent.objects.all()
-#     serializer_class = SchoolEventSerializer
-#     permission_classes = [permissions.IsAuthenticated, IsSuperUser]
-
-#     def perform_create(self, serializer):
-#         serializer.save(created_by=self.request.user)
 
 
 class SchoolEventListView(generics.ListCreateAPIView):
@@ -126,24 +119,19 @@ class UserEventListView(generics.ListAPIView):
         return queryset[:10]  # Limit to 10 upcoming events
 
 
-# ✏️ Update event (superuser only)
-# class SchoolEventUpdateView(generics.RetrieveUpdateAPIView):
-#     queryset = SchoolEvent.objects.all()
-#     serializer_class = SchoolEventSerializer
-#     permission_classes = [permissions.IsAuthenticated, IsSuperUser]
-
-
-# # ❌ Delete event (superuser only)
-# class SchoolEventDeleteView(generics.DestroyAPIView):
-#     queryset = SchoolEvent.objects.all()
-#     serializer_class = SchoolEventSerializer
-#     permission_classes = [permissions.IsAuthenticated, IsSuperUser]
-
-
 class SchoolEventDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = SchoolEventSerializer
     queryset = SchoolEvent.objects.all()
+
+    def get_permissions(self):
+        """
+        Allow any authenticated user to retrieve,
+        but only event creators or admins can update/delete.
+        """
+        if self.request.method in ["PUT", "PATCH", "DELETE"]:
+            return [CanManageEvent()]
+        return super().get_permissions()
 
     def get_serializer_class(self):
         if self.request.method in ["PUT", "PATCH"]:
@@ -158,36 +146,35 @@ class SchoolEventDetailView(generics.RetrieveUpdateDestroyAPIView):
         )
 
 
-class EventRSVPView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+class EventRSVPView(CreateAPIView):
+    serializer_class = EventRSVPSerializer
+    permission_classes = [IsAuthenticated]
 
-    def post(self, request, event_id):
-        event = get_object_or_404(SchoolEvent, id=event_id)
+    def dispatch(self, request, *args, **kwargs):
+        self.event = get_object_or_404(SchoolEvent, id=kwargs["event_id"])
 
-        if not event.requires_rsvp:
+        if not self.event.requires_rsvp:
             return Response(
                 {"detail": "This event does not require RSVP"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if event.rsvp_deadline and timezone.now() > event.rsvp_deadline:
+        if self.event.rsvp_deadline and timezone.now() > self.event.rsvp_deadline:
             return Response(
                 {"detail": "RSVP deadline has passed"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if EventRSVP.objects.filter(event=event, user=request.user).exists():
+        if EventRSVP.objects.filter(event=self.event, user=request.user).exists():
             return Response(
                 {"detail": "You have already responded to this event"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        serializer = EventRSVPSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save(event=event, user=request.user)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return super().dispatch(request, *args, **kwargs)
 
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    def perform_create(self, serializer):
+        serializer.save(event=self.event, user=self.request.user)
 
 
 class EventRSVPListView(generics.ListAPIView):

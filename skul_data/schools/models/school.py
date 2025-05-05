@@ -34,6 +34,17 @@ class School(models.Model):
         default="TERM",
     )
 
+    current_term = models.CharField(
+        max_length=20,
+        choices=[("term_1", "Term 1"), ("term_2", "Term 2"), ("term_3", "Term 3")],
+        null=True,
+        blank=True,
+    )
+    term_start_date = models.DateField(null=True, blank=True)
+    term_end_date = models.DateField(null=True, blank=True)
+
+    current_school_year = models.CharField(max_length=20, null=True, blank=True)
+
     # Relationships
     schooladmin = models.OneToOneField(
         "users.User",

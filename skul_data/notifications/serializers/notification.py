@@ -4,7 +4,7 @@ from skul_data.notifications.models.notification import (
     Message,
     MessageAttachment,
 )
-from users.serializers.base_user import UserDetailSerializer
+from skul_data.users.serializers.base_user import UserDetailSerializer
 
 
 class MessageAttachmentSerializer(serializers.ModelSerializer):

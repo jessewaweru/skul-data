@@ -55,19 +55,6 @@ class SchoolEvent(models.Model):
         SchoolClass, blank=True, related_name="class_events"
     )
 
-    # School term/year context
-    current_school_year = models.CharField(max_length=20, blank=True, null=True)
-    current_term = models.CharField(
-        max_length=20,
-        blank=True,
-        null=True,
-        choices=[
-            ("term_1", "Term 1"),
-            ("term_2", "Term 2"),
-            ("term_3", "Term 3"),
-        ],
-    )
-
     # Event details
     location = models.CharField(max_length=255, blank=True, null=True)
     is_all_day = models.BooleanField(default=False)
@@ -110,20 +97,6 @@ class SchoolEvent(models.Model):
             .first()
         )
         return event.current_school_year if event else None
-
-    @classmethod
-    def get_current_term(cls):
-        today = timezone.now()
-        event = (
-            cls.objects.filter(
-                current_term__isnull=False,
-                start_datetime__lte=today,
-                end_datetime__gte=today,
-            )
-            .order_by("-start_datetime")
-            .first()
-        )
-        return event.current_term if event else None
 
     def get_target_users(self):
         """Get all users who should see this event"""

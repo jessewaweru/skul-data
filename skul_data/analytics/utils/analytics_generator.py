@@ -7,7 +7,6 @@ from django.db.models import (
     F,
     Case,
     When,
-    FloatField,
     Max,
     ExpressionWrapper,
     DurationField,
@@ -26,6 +25,7 @@ from skul_data.users.models.parent import Parent
 from skul_data.users.models.teacher import Teacher
 from skul_data.documents.models.document import Document
 from skul_data.students.models.student import Student, StudentAttendance
+from skul_data.schools.utils.school import get_current_term
 
 
 # Helper methods for each analytics metric
@@ -801,26 +801,3 @@ def get_class_filter(filters):
     if "class_id" in filters:
         return {"student__school_class__id": filters["class_id"]}
     return {}
-
-
-def get_current_term():
-    """Helper to get current term dates"""
-    now = timezone.now()
-    if now.month in [1, 2, 3, 4]:
-        return {
-            "name": "Term 1",
-            "start_date": timezone.datetime(now.year, 1, 1).date(),
-            "end_date": timezone.datetime(now.year, 4, 30).date(),
-        }
-    elif now.month in [5, 6, 7, 8]:
-        return {
-            "name": "Term 2",
-            "start_date": timezone.datetime(now.year, 5, 1).date(),
-            "end_date": timezone.datetime(now.year, 8, 31).date(),
-        }
-    else:
-        return {
-            "name": "Term 3",
-            "start_date": timezone.datetime(now.year, 9, 1).date(),
-            "end_date": timezone.datetime(now.year, 12, 31).date(),
-        }

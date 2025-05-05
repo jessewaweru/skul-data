@@ -34,6 +34,7 @@ from skul_data.reports.utils.report_generator import (
     generate_class_term_reports,
     generate_student_term_report,
 )
+from skul_data.schools.utils.school import get_current_term
 
 logger = get_task_logger(__name__)
 
@@ -75,7 +76,7 @@ def generate_term_end_reports():
 
     for school in schools:
         config = school.academicreportconfig
-        term = SchoolEvent.get_current_term()
+        term = get_current_term(school.id)
         school_year = SchoolEvent.get_current_school_year()
 
         generate_school_term_reports_task.delay(

@@ -98,8 +98,6 @@ class CreateSchoolEventSerializer(serializers.ModelSerializer):
             "targeted_teachers",
             "targeted_parents",
             "targeted_classes",
-            "current_school_year",
-            "current_term",
             "location",
             "is_all_day",
             "attachment",
