@@ -119,13 +119,13 @@ class Document(models.Model):
             if not self.school:
                 if hasattr(self.uploaded_by, "teacher_profile"):
                     self.school = self.uploaded_by.teacher_profile.school
-                elif hasattr(self.uploaded_by, "superuser_profile"):
-                    self.school = self.uploaded_by.superuser_profile.school
+                elif hasattr(self.uploaded_by, "schooladmin_profile"):
+                    self.school = self.uploaded_by.schooladmin_profile.school
 
         super().save(*args, **kwargs)
 
     def __str__(self):
-        uploader = self.uploaded_by_superuser or self.uploaded_by_teacher
+        uploader = self.uploaded_by_schooladmin or self.uploaded_by_teacher
         return f"{self.title} uploaded by {uploader}"
 
 

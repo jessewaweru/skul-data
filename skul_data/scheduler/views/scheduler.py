@@ -21,9 +21,12 @@ from skul_data.users.permissions.permission import CanManageEvent
 User = get_user_model()
 
 
-class IsSuperUser(permissions.BasePermission):
+class IsSchoolAdmin(permissions.BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.is_superuser
+        return (
+            request.user.is_authenticated
+            and request.user.user_type == User.SCHOOL_ADMIN
+        )
 
 
 class SchoolEventListView(generics.ListCreateAPIView):
@@ -45,8 +48,8 @@ class SchoolEventListView(generics.ListCreateAPIView):
                 start_datetime__gte=start_date, end_datetime__lte=end_date
             )
 
-        # Superusers see all events
-        if user.is_superuser:
+        # School admin see all events
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset.order_by("-start_datetime")
 
         # Teachers see events targeted to them or their classes
@@ -139,7 +142,7 @@ class SchoolEventDetailView(generics.RetrieveUpdateDestroyAPIView):
         return SchoolEventSerializer
 
     def get_queryset(self):
-        if self.request.user.is_superuser:
+        if self.request.user.user_type == User.SCHOOL_ADMIN:
             return SchoolEvent.objects.filter(school=self.request.user.school)
         return SchoolEvent.objects.filter(
             school=self.request.user.school, created_by=self.request.user
@@ -178,7 +181,7 @@ class EventRSVPView(CreateAPIView):
 
 
 class EventRSVPListView(generics.ListAPIView):
-    permission_classes = [IsSuperUser]
+    permission_classes = [IsSchoolAdmin]
     serializer_class = EventRSVPSerializer
 
     def get_queryset(self):

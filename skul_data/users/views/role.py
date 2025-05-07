@@ -1,7 +1,9 @@
 from rest_framework import viewsets, permissions
+from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth.models import Permission
 from skul_data.users.models.role import Role
 from skul_data.users.serializers.role import PermissionSerializer, RoleSerializer
+from skul_data.users.permissions.permission import HasRolePermission
 
 
 class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
@@ -12,7 +14,9 @@ class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
 
 class RoleViewSet(viewsets.ModelViewSet):
     serializer_class = RoleSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    # permission_classes = [permissions.IsAuthenticated]
+    required_permission = "manage_roles"
+    permission_classes = [IsAuthenticated, HasRolePermission]
 
     def get_queryset(self):
         # Only show roles for the current user's school

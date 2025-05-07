@@ -36,7 +36,7 @@ class SchoolEvent(models.Model):
     event_type = models.CharField(max_length=20, choices=EVENT_TYPES, default="general")
     target_type = models.CharField(max_length=20, choices=EVENT_TARGETS, default="all")
 
-    # Who created the event (usually the superuser)
+    # Who created the event (usually the school admin)
     created_by = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name="created_events"
     )

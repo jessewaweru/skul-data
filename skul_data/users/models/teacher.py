@@ -24,6 +24,7 @@ class Teacher(models.Model):
     assigned_classes = models.ManyToManyField(
         "schools.SchoolClass", related_name="teachers", blank=True
     )
+    phone_number = models.CharField(max_length=21, blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="ACTIVE")
     hire_date = models.DateField(default=timezone.now)
     termination_date = models.DateField(null=True, blank=True)
@@ -71,10 +72,10 @@ class Teacher(models.Model):
 
     @property
     def active_students_count(self):
-        from students.models import Student
+        from skul_data.students.models.student import Student, StudentStatus
 
         return Student.objects.filter(
-            school_class__in=self.assigned_classes.all(), status="ACTIVE"
+            teacher=self, status=StudentStatus.ACTIVE, is_active=True
         ).count()
 
     @property

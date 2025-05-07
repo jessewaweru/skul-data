@@ -56,7 +56,7 @@ class ParentSerializer(serializers.ModelSerializer):
     def validate_school(self, value):
         """Ensure the school matches the requesting user's school"""
         user = self.context["request"].user
-        if not user.is_superuser and value != user.school:
+        if not user.user_type == User.SCHOOL_ADMIN and value != user.school:
             raise serializers.ValidationError("Invalid school for this user")
         return value
 
@@ -84,12 +84,14 @@ class ParentCreateSerializer(serializers.ModelSerializer):
         ]
 
     def create(self, validated_data):
+        # Extract email before popping it to use for username
+        email = validated_data.get("email")
         # Create the User first
         user_data = {
-            "email": validated_data.pop("email"),
+            "email": validated_data.pop("email", email),
             "first_name": validated_data.pop("first_name"),
             "last_name": validated_data.pop("last_name"),
-            "username": validated_data["email"],  # Using email as username
+            "username": email,
             "user_type": User.PARENT,
         }
 

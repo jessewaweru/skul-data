@@ -59,9 +59,9 @@ class User(AbstractUser):
 
     # Add this method to check permissions
     def has_perm(self, perm, obj=None):
-        if self.is_superuser:
+        if self.user_type == self.SCHOOL_ADMIN:
             return True
-        if self.role and self.role.permissions.filter(codename=perm).exists():
+        if self.role and self.role.permissions.filter(code=perm).exists():
             return True
         return super().has_perm(perm, obj)
 

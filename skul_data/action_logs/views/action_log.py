@@ -12,7 +12,7 @@ from skul_data.users.permissions.permission import IsAdministrator
 class ActionLogViewSet(viewsets.ReadOnlyModelViewSet):
     """
     Viewset for action logs with filtering capabilities.
-    Only accessible by superusers (school administrators).
+    Only accessible by primary school administrators.
     """
 
     queryset = ActionLog.objects.all().order_by("-timestamp")

@@ -30,13 +30,13 @@ class BaseUserSerializer(serializers.ModelSerializer):
 class UserDetailSerializer(BaseUserSerializer):
     teacher_profile = serializers.SerializerMethodField()
     parent_profile = serializers.SerializerMethodField()
-    superuser_profile = serializers.SerializerMethodField()
+    schooladmin_profile = serializers.SerializerMethodField()
 
     class Meta(BaseUserSerializer.Meta):
         fields = BaseUserSerializer.Meta.fields + [
             "teacher_profile",
             "parent_profile",
-            "superuser_profile",
+            "schooladmin_profile",
         ]
 
     def get_teacher_profile(self, obj):
@@ -61,11 +61,11 @@ class UserDetailSerializer(BaseUserSerializer):
             }
         return None
 
-    def get_superuser_profile(self, obj):
-        if hasattr(obj, "superuser_profile"):
+    def get_schooladmin_profile(self, obj):
+        if hasattr(obj, "schooladmin_profile"):
             return {
-                "school_name": obj.superuser_profile.school_name,
-                "school_code": obj.superuser_profile.school_code,
-                "phone_number": obj.superuser_profile.phone_number,
+                "school_name": obj.schooladmin_profile.school_name,
+                "school_code": obj.schooladmin_profile.school_code,
+                "phone_number": obj.schooladmin_profile.phone_number,
             }
         return None

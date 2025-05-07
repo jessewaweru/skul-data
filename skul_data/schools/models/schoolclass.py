@@ -72,7 +72,7 @@ class SchoolClass(models.Model):
 
     @property
     def average_performance(self):
-        from students.models import AcademicRecord
+        from skul_data.reports.models.academic_record import AcademicRecord
 
         avg = AcademicRecord.objects.filter(student__in=self.students.all()).aggregate(
             models.Avg("score")

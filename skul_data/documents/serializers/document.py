@@ -70,8 +70,8 @@ class DocumentSerializer(serializers.ModelSerializer):
             if user.user_type == User.TEACHER and user.teacher_profile.school != school:
                 raise PermissionDenied("You can only upload documents for your school")
             elif (
-                user.user_type == User.SCHOOL_SUPERUSER
-                and user.superuser_profile.school != school
+                user.user_type == User.SCHOOL_ADMIN
+                and user.schooladmin_profile.school != school
             ):
                 raise PermissionDenied("You can only upload documents for your school")
 

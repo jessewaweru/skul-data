@@ -5,6 +5,7 @@ from skul_data.schools.serializers.schoolstream import (
     SchoolStreamCreateSerializer,
 )
 from skul_data.users.permissions.permission import IsAdministrator
+from skul_data.users.models.base_user import User
 
 
 class SchoolStreamViewSet(viewsets.ModelViewSet):
@@ -20,7 +21,7 @@ class SchoolStreamViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return SchoolStream.objects.all()
 
         school = getattr(user, "school", None)

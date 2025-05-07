@@ -16,7 +16,7 @@ class Role(models.Model):
         ("CUSTOM", "Custom"),
     ]
 
-    name = models.CharField(max_length=100, unique=True)
+    name = models.CharField(max_length=100)
     role_type = models.CharField(max_length=10, choices=ROLE_TYPES, default="CUSTOM")
     permissions = models.ManyToManyField(Permission)
     created_at = models.DateTimeField(auto_now_add=True)

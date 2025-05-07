@@ -11,6 +11,7 @@ from skul_data.users.serializers.base_user import BaseUserSerializer
 from skul_data.students.serializers.student import SubjectSerializer
 from skul_data.schools.models.schoolclass import SchoolClass
 from skul_data.students.models.student import Subject
+from django.utils import timezone
 
 
 class TeacherSerializer(serializers.ModelSerializer):
@@ -21,7 +22,7 @@ class TeacherSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source="user.email", read_only=True)
     first_name = serializers.CharField(source="user.first_name")
     last_name = serializers.CharField(source="user.last_name")
-    phone_number = serializers.CharField(source="user.phone_number")
+    # phone_number = serializers.CharField(source="user.phone_number")
     last_login = serializers.DateTimeField(source="user.last_login", read_only=True)
     subjects_taught = SubjectSerializer(many=True, read_only=True)
     assigned_classes_ids = serializers.PrimaryKeyRelatedField(
@@ -41,10 +42,10 @@ class TeacherSerializer(serializers.ModelSerializer):
             "email",
             "first_name",
             "last_name",
-            "phone_number",
             "school",
             "status",
             "hire_date",
+            "phone_number",
             "termination_date",
             "qualification",
             "specialization",
@@ -94,12 +95,14 @@ class TeacherCreateSerializer(serializers.ModelSerializer):
         many=True,
         required=False,
     )
+    hire_date = serializers.DateField(required=False)
 
     class Meta:
         model = Teacher
         fields = [
             "user_id",
             "school",
+            "phone_number",
             "status",
             "hire_date",
             "qualification",
@@ -121,6 +124,11 @@ class TeacherCreateSerializer(serializers.ModelSerializer):
         from skul_data.students.serializers.student import SubjectSerializer
 
         return SubjectSerializer(obj.subjects_taught.all(), many=True).data
+
+    def create(self, validated_data):
+        if "hire_date" not in validated_data:
+            validated_data["hire_date"] = timezone.now().date()
+        return super().create(validated_data)
 
 
 class TeacherStatusChangeSerializer(serializers.Serializer):
@@ -164,6 +172,7 @@ class TeacherWorkloadSerializer(serializers.ModelSerializer):
 class TeacherAttendanceSerializer(serializers.ModelSerializer):
     teacher = TeacherSerializer(read_only=True)
     recorded_by = BaseUserSerializer(read_only=True)
+    date = serializers.DateField()
 
     class Meta:
         model = TeacherAttendance

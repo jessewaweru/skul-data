@@ -21,6 +21,8 @@ from skul_data.users.serializers.teacher import (
     TeacherDocumentSerializer,
 )
 from skul_data.users.permissions.permission import IsAdministrator, IsTeacher
+from skul_data.users.permissions.permission import HasRolePermission
+from skul_data.users.models.base_user import User
 
 
 class TeacherViewSet(viewsets.ModelViewSet):
@@ -42,30 +44,38 @@ class TeacherViewSet(viewsets.ModelViewSet):
         "specialization",
         "payroll_number",
     ]
+    required_permission = "manage_teachers"
+    permission_classes = [IsAuthenticated, HasRolePermission]
 
     def get_serializer_class(self):
         if self.action == "create":
             return TeacherCreateSerializer
         return TeacherSerializer
 
-    def get_permissions(self):
-        if self.action in [
-            "create",
-            "update",
-            "partial_update",
-            "destroy",
-            "change_status",
-            "assign_classes",
-            "assign_subjects",
-        ]:
-            return [IsAdministrator()]
-        return [IsAuthenticated()]
+    # def get_permissions(self):
+    #     if self.action in [
+    #         "create",
+    #         "update",
+    #         "partial_update",
+    #         "destroy",
+    #         "change_status",
+    #         "assign_classes",
+    #         "assign_subjects",
+    #     ]:
+    #         return [IsAdministrator()]
+    #     return [IsAuthenticated()]
+
+    # Method-specific permissions for certain actions
+    required_permission_post = "create_teacher"  # Used for create action
+    required_permission_put = "update_teacher"  # Used for update action
+    required_permission_patch = "update_teacher"  # Used for partial_update action
+    required_permission_delete = "manage_teachers"  # Used for delete action
 
     def get_queryset(self):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset
 
         school = getattr(user, "school", None)
@@ -99,6 +109,9 @@ class TeacherViewSet(viewsets.ModelViewSet):
 
         return Response(TeacherSerializer(teacher).data, status=status.HTTP_200_OK)
 
+    # Add specific required permission for change_status action
+    change_status.required_permission = "change_teacher_status"
+
     @action(detail=True, methods=["post"])
     def assign_classes(self, request, pk=None):
         teacher = self.get_object()
@@ -117,6 +130,9 @@ class TeacherViewSet(viewsets.ModelViewSet):
 
         return Response(TeacherSerializer(teacher).data, status=status.HTTP_200_OK)
 
+    # Add specific required permission for assign_classes action
+    assign_classes.required_permission = "assign_classes"
+
     @action(detail=True, methods=["post"])
     def assign_subjects(self, request, pk=None):
         teacher = self.get_object()
@@ -134,6 +150,9 @@ class TeacherViewSet(viewsets.ModelViewSet):
             teacher.subjects_taught.set(subjects)
 
         return Response(TeacherSerializer(teacher).data, status=status.HTTP_200_OK)
+
+    # Add specific required permission for assign_subjects action
+    assign_subjects.required_permission = "assign_subjects"
 
     @action(detail=False, methods=["get"])
     def analytics(self, request):
@@ -176,6 +195,9 @@ class TeacherViewSet(viewsets.ModelViewSet):
             }
         )
 
+    # Add specific required permission for analytics action
+    analytics.required_permission = "view_analytics"
+
 
 class TeacherWorkloadViewSet(viewsets.ModelViewSet):
     queryset = TeacherWorkload.objects.all()
@@ -188,7 +210,7 @@ class TeacherWorkloadViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset
 
         school = getattr(user, "school", None)
@@ -214,7 +236,7 @@ class TeacherAttendanceViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset
 
         school = getattr(user, "school", None)
@@ -240,7 +262,7 @@ class TeacherDocumentViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset
 
         school = getattr(user, "school", None)

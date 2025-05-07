@@ -19,6 +19,7 @@ from skul_data.schools.serializers.schoolclass import (
     ClassTimetable,
 )
 from skul_data.users.permissions.permission import IsTeacher, IsAdministrator
+from skul_data.users.models.base_user import User
 
 
 class SchoolClassViewSet(viewsets.ModelViewSet):
@@ -53,7 +54,7 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset
 
         school = getattr(user, "school", None)
@@ -156,7 +157,7 @@ class ClassTimetableViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset
 
         school = getattr(user, "school", None)
@@ -183,7 +184,7 @@ class ClassDocumentViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset
 
         school = getattr(user, "school", None)
@@ -215,7 +216,7 @@ class ClassAttendanceViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset
 
         school = getattr(user, "school", None)

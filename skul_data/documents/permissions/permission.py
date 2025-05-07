@@ -6,7 +6,7 @@ class CanUploadDocument(BasePermission):
     def has_permission(self, request, view):
         user = request.user
         return user.is_authenticated and user.user_type in [
-            User.SCHOOL_SUPERUSER,
+            User.SCHOOL_ADMIN,
             User.TEACHER,
         ]
 
@@ -15,9 +15,9 @@ class CanViewDocument(BasePermission):
     def has_object_permission(self, request, view, obj):
         user = request.user
 
-        # Superusers can view all documents in their school
-        if user.user_type == User.SCHOOL_SUPERUSER:
-            return user.superuser_profile.school == obj.school
+        # School admins can view all documents in their school
+        if user.user_type == User.SCHOOL_ADMIN:
+            return user.schooladmin_profile.school == obj.school
 
         # Teachers can view documents for their school/classes
         if user.user_type == User.TEACHER:
@@ -53,8 +53,8 @@ class CanManageDocument(BasePermission):
     def has_object_permission(self, request, view, obj):
         user = request.user
 
-        # Only the uploader or school superuser can manage
+        # Only the uploader or school admin can manage
         return obj.uploaded_by == user or (
-            user.user_type == User.SCHOOL_SUPERUSER
-            and user.superuser_profile.school == obj.school
+            user.user_type == User.SCHOOL_ADMIN
+            and user.schooladmin_profile.school == obj.school
         )

@@ -41,7 +41,7 @@ class IsParent(BasePermission):
 class CanCreateEvent(BasePermission):
     def has_permission(self, request, view):
         return request.user.is_authenticated and (
-            request.user.is_superuser
+            request.user.user_type == User.SCHOOL_ADMIN
             or request.user.role.permissions.filter(code="create_events").exists()
         )
 
@@ -49,7 +49,7 @@ class CanCreateEvent(BasePermission):
 class CanManageEvent(BasePermission):
     def has_object_permission(self, request, view, obj):
         return (
-            request.user.is_superuser
+            request.user.user_type == User.SCHOOL_ADMIN
             or obj.created_by == request.user
             or request.user.role.permissions.filter(code="manage_events").exists()
         )
@@ -61,8 +61,12 @@ class CanManageEvent(BasePermission):
 class HasRolePermission(BasePermission):
     """
     This permission checks if a user's role (via Role model) has a specific permission key.
-    The view should define a required_permission attribute like:
-        required_permission = 'view_calendar'
+    The view should define required permissions in these formats:
+
+    - required_permission = 'view_calendar'  # For all methods
+    - required_permission_get = 'view_calendar'  # For GET only
+    - required_permission_post = 'create_calendar'  # For POST only
+    etc.
     """
 
     def has_permission(self, request, view):
@@ -71,19 +75,74 @@ class HasRolePermission(BasePermission):
         if not user.is_authenticated:
             return False
 
-        # Superuser override
-        if user.is_superuser:
+        # Staff and school admins always have permission
+        if user.is_staff or user.user_type == User.SCHOOL_ADMIN:
             return True
 
+        # Primary school admin check
+        if (
+            hasattr(user, "school_admin_profile")
+            and user.school_admin_profile.is_primary
+        ):
+            return True
+
+        # Get the required permission from the view
+        # First check for method-specific permissions
+        method = request.method.lower()
+        method_permission = getattr(view, f"required_permission_{method}", None)
+
+        # Fall back to general permission if method-specific not found
+        required_permission = method_permission or getattr(
+            view, "required_permission", None
+        )
+
+        if not required_permission:
+            return False  # No permission defined = deny by default
+
+        # No role means no permissions
         role = getattr(user, "role", None)
         if not role:
             return False
 
-        required_permission = getattr(view, "required_permission", None)
-        if not required_permission:
-            return False  # No permission key defined on view = deny by default
+        # Check if the required permission is in the role's permissions
+        return role.permissions.filter(code=required_permission).exists()
 
-        return required_permission in role.permissions
+    def has_object_permission(self, request, view, obj):
+        # For object-level permissions
+        # Staff and school admins always have permission
+        if request.user.is_staff or request.user.user_type == User.SCHOOL_ADMIN:
+            return True
+
+        # Primary school admin check
+        if (
+            hasattr(request.user, "school_admin_profile")
+            and request.user.school_admin_profile.is_primary
+        ):
+            return True
+
+        # Reuse the same logic but also check for owner if applicable
+        has_general_permission = self.has_permission(request, view)
+
+        # If general permission passes, also check ownership if relevant
+        if has_general_permission:
+            # If the object has a user field and it matches the requester
+            owner_field = getattr(view, "owner_field", "user")
+            if hasattr(obj, owner_field) and getattr(obj, owner_field) == request.user:
+                return True
+
+            # If the object has a created_by field and it matches the requester
+            if hasattr(obj, "created_by") and obj.created_by == request.user:
+                return True
+
+            # Specific school check if relevant
+            if (
+                hasattr(obj, "school")
+                and hasattr(request.user, "school")
+                and obj.school == request.user.school
+            ):
+                return True
+
+        return has_general_permission
 
 
 # # === PREDEFINED PERMISSIONS FOR REFERENCE ===
@@ -171,7 +230,6 @@ DEFAULT_PERMISSIONS = [
     (MANAGE_EVENTS, "Can manage all calendar events"),
     (VIEW_CALENDAR, "Can view the school calendar"),
     (EXPORT_CALENDAR, "Can export calendar data"),
-    # ... keep your existing permissions ...
 ]
 
 SCHOOL_ADMIN_PERMISSIONS = [

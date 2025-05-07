@@ -67,7 +67,7 @@ class SchoolRegisterSerializer(serializers.ModelSerializer):
             phone=validated_data["phone"],
             email=validated_data["email"],
             website=validated_data.get("website", ""),
-            superuser=user,
+            schooladmin=user,
         )
 
         # Create SchoolAdmin profile

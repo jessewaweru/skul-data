@@ -1,4 +1,5 @@
 from rest_framework import viewsets, status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 from django.contrib.sessions.models import Session
@@ -6,7 +7,13 @@ from skul_data.users.models.session import UserSession
 from skul_data.users.serializers.session import UserSessionSerializer
 
 
-class SessionViewSet(viewsets.ViewSet):
+class UserSessionViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        # Typically only show the user's own sessions
+        return UserSession.objects.filter(user=self.request.user)
+
     def list(self, request):
         # Get all active sessions with user information
         active_sessions = UserSession.objects.filter(

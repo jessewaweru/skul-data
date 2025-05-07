@@ -15,12 +15,12 @@ class Parent(models.Model):
     user = models.OneToOneField(
         User, on_delete=models.CASCADE, related_name="parent_profile"
     )
-    phone_number = models.CharField(max_length=15, blank=True, null=True)
+    phone_number = models.CharField(max_length=21, blank=True, null=True)
     school = models.ForeignKey(
         "schools.School", on_delete=models.CASCADE, related_name="parents"
     )
     children = models.ManyToManyField("students.Student", related_name="parents")
-    address = models.TextField(blank=True, null=True)
+    address = models.TextField(blank=True, null=True, max_length=300)
     occupation = models.CharField(max_length=100, blank=True, null=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="PENDING")
     preferred_language = models.CharField(max_length=10, default="en")

@@ -27,6 +27,7 @@ from skul_data.reports.serializers.report import (
     TermReportRequestSerializer,
     GeneratedReportAccessSerializer,
 )
+from skul_data.users.models.base_user import User
 
 
 class ReportTemplateViewSet(viewsets.ModelViewSet):
@@ -42,7 +43,7 @@ class ReportTemplateViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return self.queryset
 
         # For school admins/teachers, show system templates + their school's templates
@@ -55,11 +56,11 @@ class ReportTemplateViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         user = self.request.user
-        # Check if user is a real project-level superuser
+        # Check if user is a real project-level school admin
         is_system = serializer.validated_data.get("is_system", False)
-        if is_system and not user.is_superuser:
+        if is_system and not user.user_type == User.SCHOOL_ADMIN:
             raise serializers.ValidationError(
-                "Only project-level superusers can create system templates."
+                "Only project-level school admins can create system templates."
             )
         # Automatically assign school if it's a school admin
         school = getattr(user, "school", None)
@@ -72,7 +73,7 @@ class ReportTemplateViewSet(viewsets.ModelViewSet):
         user = self.request.user
         is_system = serializer.validated_data.get("is_system", None)
 
-        if is_system and not user.is_superuser:
+        if is_system and not user.user_type == User.SCHOOL_ADMIN:
             raise serializers.ValidationError(
                 "You cannot convert a school template to a system template."
             )
@@ -99,7 +100,7 @@ class GeneratedReportViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return self.queryset
         school = getattr(user, "school", None)
         if not school:
@@ -152,7 +153,7 @@ class ReportScheduleViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return self.queryset
 
         school = getattr(user, "school", None)
@@ -186,7 +187,7 @@ class ReportNotificationViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return self.queryset
 
         return self.queryset.filter(models.Q(sent_to=user) | models.Q(email=user.email))
@@ -199,7 +200,7 @@ class AcademicReportConfigViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return self.queryset
 
         school = getattr(user, "school", None)
@@ -222,7 +223,7 @@ class TermReportRequestViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return self.queryset
 
         # Parents can only see their own requests

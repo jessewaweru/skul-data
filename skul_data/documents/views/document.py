@@ -37,8 +37,8 @@ class DocumentCategoryViewSet(viewsets.ModelViewSet):
         user = self.request.user
 
         if user.is_authenticated:
-            if user.user_type == User.SCHOOL_SUPERUSER:
-                return queryset.filter(school=user.superuser_profile.school)
+            if user.user_type == User.SCHOOL_ADMIN:
+                return queryset.filter(school=user.schooladmin_profile.school)
             elif user.user_type == User.TEACHER:
                 return queryset.filter(school=user.teacher_profile.school)
 
@@ -48,8 +48,8 @@ class DocumentCategoryViewSet(viewsets.ModelViewSet):
         user = self.request.user
         school = None
 
-        if user.user_type == User.SCHOOL_SUPERUSER:
-            school = user.superuser_profile.school
+        if user.user_type == User.SCHOOL_ADMIN:
+            school = user.schooladmin_profile.school
         elif user.user_type == User.TEACHER:
             school = user.teacher_profile.school
 
@@ -82,9 +82,9 @@ class DocumentViewSet(viewsets.ModelViewSet):
         if not user.is_authenticated:
             return queryset.none()
 
-        # Superusers see all documents in their school
-        if user.user_type == User.SCHOOL_SUPERUSER:
-            return queryset.filter(school=user.superuser_profile.school)
+        # School admins see all documents in their school
+        if user.user_type == User.SCHOOL_ADMIN:
+            return queryset.filter(school=user.schooladmin_profile.school)
         # Teachers see documents for their school and assigned classes
         if user.user_type == User.TEACHER:
             teacher_profile = user.teacher_profile

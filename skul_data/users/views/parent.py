@@ -18,6 +18,10 @@ from skul_data.users.serializers.parent import (
 )
 from rest_framework import filters
 from django_filters.rest_framework import DjangoFilterBackend
+from skul_data.users.permissions.permission import HasRolePermission
+from skul_data.reports.models.academic_record import AcademicRecord
+from skul_data.reports.serializers.academic_record import AcademicRecordSerializer
+from skul_data.users.models.base_user import User
 
 
 class ParentViewSet(viewsets.ModelViewSet):
@@ -26,7 +30,6 @@ class ParentViewSet(viewsets.ModelViewSet):
     filterset_fields = [
         "status",
         "school",
-        "receive_sms_notifications",
         "receive_email_notifications",
     ]
     search_fields = [
@@ -37,6 +40,15 @@ class ParentViewSet(viewsets.ModelViewSet):
         "children__first_name",
         "children__last_name",
     ]
+    required_permission = "manage_parents"
+    permission_classes = [IsAuthenticated, HasRolePermission]
+
+    # Specify different permissions for different actions
+    required_permission = "view_parents"  # Default permission for read operations
+    required_permission_post = "create_parent"
+    required_permission_put = "update_parent"
+    required_permission_patch = "update_parent"
+    required_permission_delete = "manage_parents"
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -49,18 +61,18 @@ class ParentViewSet(viewsets.ModelViewSet):
             return ParentNotificationPreferenceSerializer
         return ParentSerializer
 
-    def get_permissions(self):
-        if self.action in ["create", "update", "partial_update", "destroy"]:
-            return [IsAdministrator()]
-        elif self.action in ["change_status", "assign_children"]:
-            return [IsAdministrator()]
-        return [IsAuthenticated()]
+    # def get_permissions(self):
+    #     if self.action in ["create", "update", "partial_update", "destroy"]:
+    #         return [IsAdministrator()]
+    #     elif self.action in ["change_status", "assign_children"]:
+    #         return [IsAdministrator()]
+    #     return [IsAuthenticated()]
 
     def get_queryset(self):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset
 
         school = getattr(user, "school", None)
@@ -77,6 +89,9 @@ class ParentViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def change_status(self, request, pk=None):
+        # For custom actions, specify the permission directly
+        self.required_permission = "change_parent_status"
+
         parent = self.get_object()
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -111,6 +126,9 @@ class ParentViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def assign_children(self, request, pk=None):
+        # For custom actions, specify the permission directly
+        self.required_permission = "assign_children"
+
         parent = self.get_object()
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -241,7 +259,7 @@ class ParentNotificationViewSet(viewsets.ModelViewSet):
         queryset = ParentNotification.objects.all()
         user = self.request.user
 
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset
 
         # School admins can see notifications for parents in their school
@@ -298,7 +316,7 @@ class ParentStatusChangeViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = ParentStatusChange.objects.all()
         user = self.request.user
 
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset
 
         # School admins can see status changes for parents in their school

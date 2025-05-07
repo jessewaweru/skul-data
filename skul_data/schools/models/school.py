@@ -21,7 +21,7 @@ class School(models.Model):
     address = models.TextField(null=True, blank=True)
     city = models.CharField(max_length=100, null=True, blank=True)
     country = models.CharField(max_length=100, default="Kenya")
-    phone = models.CharField(max_length=15, null=True, blank=True)
+    phone = models.CharField(max_length=20, null=True, blank=True)
     email = models.EmailField()
     website = models.URLField(blank=True)
     logo = models.ImageField(upload_to="school_logos/", null=True, blank=True)

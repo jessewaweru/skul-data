@@ -32,6 +32,7 @@ import csv
 from django.utils import timezone
 from django_filters import rest_framework as filters
 from django_filters.rest_framework import DjangoFilterBackend
+from skul_data.users.models.base_user import User
 
 
 class StudentFilter(filters.FilterSet):
@@ -87,7 +88,7 @@ class StudentViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset
 
         school = getattr(user, "school", None)
@@ -293,7 +294,7 @@ class StudentDocumentViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset
 
         # Filter by student's school
@@ -332,7 +333,7 @@ class StudentNoteViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset
 
         # Filter by student's school
@@ -401,7 +402,7 @@ class StudentAttendanceViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset
 
         school = getattr(user, "school", None)
@@ -686,7 +687,7 @@ class SubjectViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if user.is_superuser:
+        if user.user_type == User.SCHOOL_ADMIN:
             return queryset
 
         school = getattr(user, "school", None)

@@ -20,10 +20,11 @@ class SessionTrackingMiddleware:
         ua = user_agents.parse(request.META.get("HTTP_USER_AGENT", ""))
 
         UserSession.objects.update_or_create(
-            session_key=request.session.session_key,
+            session=request.session,  # Use the session object directly
             defaults={
                 "user": request.user,
                 "ip_address": self.get_client_ip(request),
+                "user_agent": request.META.get("HTTP_USER_AGENT", ""),
                 "device": self.get_device_name(ua),
                 "browser": ua.browser.family,
                 "os": ua.os.family,
