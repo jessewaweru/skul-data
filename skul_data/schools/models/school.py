@@ -18,7 +18,7 @@ class School(models.Model):
     type = models.CharField(max_length=3, choices=SCHOOL_TYPES, default="PRI")
     motto = models.CharField(max_length=255, blank=True)
     founded_date = models.DateField(null=True, blank=True)
-    address = models.TextField(null=True, blank=True)
+    location = models.CharField(max_length=300, blank=True, null=True)
     city = models.CharField(max_length=100, null=True, blank=True)
     country = models.CharField(max_length=100, default="Kenya")
     phone = models.CharField(max_length=20, null=True, blank=True)
@@ -52,7 +52,6 @@ class School(models.Model):
         related_name="administered_school",
         default=None,
     )
-
     # Status
     is_active = models.BooleanField(default=True)
     registration_date = models.DateTimeField(auto_now_add=True)

@@ -19,15 +19,6 @@ class SchoolAdmin(models.Model):
     def __str__(self):
         return f"{self.user.get_full_name()} - {self.school.name}"
 
-    # def save(self, *args, **kwargs):
-    #     if not self.pk:  # On creation
-    #         # Ensure only one primary admin per school
-    #         if self.is_primary:
-    #             SchoolAdmin.objects.filter(school=self.school, is_primary=True).update(
-    #                 is_primary=False
-    #             )
-    #     super().save(*args, **kwargs)
-
     def save(self, *args, **kwargs):
         # Check if this admin is being set as primary
         if self.is_primary:

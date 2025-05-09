@@ -6,6 +6,8 @@ from skul_data.documents.views.document import (
     DocumentShareLinkViewSet,
 )
 
+# app_name = "documents"
+
 router = DefaultRouter()
 router.register(r"documents", DocumentViewSet, basename="document")
 router.register(r"categories", DocumentCategoryViewSet, basename="category")

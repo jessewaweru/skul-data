@@ -35,7 +35,10 @@ urlpatterns = [
     path("schools/", include("skul_data.schools.urls")),
     path("students/", include("skul_data.students.urls")),
     path("scheduler/", include("skul_data.scheduler.urls")),
-    path("documents/", include("skul_data.documents.urls")),
+    path(
+        "documents/",
+        include(("skul_data.documents.urls", "documents"), namespace="documents"),
+    ),
     path("reports/", include("skul_data.reports.urls")),
     path("analytics/", include("skul_data.analytics.urls")),
     path("logs/", include("skul_data.action_logs.urls")),

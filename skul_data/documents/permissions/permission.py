@@ -17,7 +17,7 @@ class CanViewDocument(BasePermission):
 
         # School admins can view all documents in their school
         if user.user_type == User.SCHOOL_ADMIN:
-            return user.schooladmin_profile.school == obj.school
+            return user.school_admin_profile.school == obj.school
 
         # Teachers can view documents for their school/classes
         if user.user_type == User.TEACHER:
@@ -56,5 +56,5 @@ class CanManageDocument(BasePermission):
         # Only the uploader or school admin can manage
         return obj.uploaded_by == user or (
             user.user_type == User.SCHOOL_ADMIN
-            and user.schooladmin_profile.school == obj.school
+            and user.school_admin_profile.school == obj.school
         )

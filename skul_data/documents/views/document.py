@@ -1,8 +1,9 @@
 import os
 import io
 import zipfile
+from django.db import models
 from django.core.files.base import ContentFile
-from django.http import FileResponse
+from django.http import FileResponse, Http404
 from rest_framework import status
 from rest_framework import viewsets
 from skul_data.documents.models.document import DocumentCategory
@@ -38,9 +39,16 @@ class DocumentCategoryViewSet(viewsets.ModelViewSet):
 
         if user.is_authenticated:
             if user.user_type == User.SCHOOL_ADMIN:
-                return queryset.filter(school=user.schooladmin_profile.school)
+                # Include both school-specific categories and system categories (school=None)
+                return queryset.filter(
+                    models.Q(school=user.school_admin_profile.school)
+                    | models.Q(school=None)
+                )
             elif user.user_type == User.TEACHER:
-                return queryset.filter(school=user.teacher_profile.school)
+                # Include both school-specific categories and system categories (school=None)
+                return queryset.filter(
+                    models.Q(school=user.teacher_profile.school) | models.Q(school=None)
+                )
 
         return queryset.filter(is_custom=False)
 
@@ -49,11 +57,20 @@ class DocumentCategoryViewSet(viewsets.ModelViewSet):
         school = None
 
         if user.user_type == User.SCHOOL_ADMIN:
-            school = user.schooladmin_profile.school
+            school = user.school_admin_profile.school
         elif user.user_type == User.TEACHER:
             school = user.teacher_profile.school
 
         serializer.save(school=school, is_custom=True)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if not instance.is_custom:
+            return Response(
+                {"detail": "System categories cannot be modified"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().update(request, *args, **kwargs)
 
 
 class DocumentViewSet(viewsets.ModelViewSet):
@@ -84,15 +101,28 @@ class DocumentViewSet(viewsets.ModelViewSet):
 
         # School admins see all documents in their school
         if user.user_type == User.SCHOOL_ADMIN:
-            return queryset.filter(school=user.schooladmin_profile.school)
-        # Teachers see documents for their school and assigned classes
+            return queryset.filter(school=user.school_admin_profile.school)
+
+        # Teachers see:
+        # 1. Public documents from their school
+        # 2. Documents for their assigned class
+        # 3. Documents they uploaded
         if user.user_type == User.TEACHER:
             teacher_profile = user.teacher_profile
-            return queryset.filter(school=teacher_profile.school).filter(
-                models.Q(related_class__isnull=True)
-                | models.Q(related_class=teacher_profile.assigned_class)
-            )
-        # Parents see documents for their children
+            school = teacher_profile.school
+
+            return queryset.filter(
+                models.Q(school=school)
+                & (
+                    models.Q(is_public=True)  # Public docs
+                    | models.Q(
+                        related_class=teacher_profile.assigned_class
+                    )  # Class docs
+                    | models.Q(uploaded_by=user)  # Own docs
+                )
+            ).distinct()
+
+        # Parents see documents for their children and public documents
         if user.user_type == User.PARENT:
             parent_profile = user.parent_profile
             return queryset.filter(
@@ -164,18 +194,35 @@ class DocumentViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def generate_share_link(self, request, pk=None):
         document = self.get_object()
-        serializer = DocumentShareLinkSerializer(
-            data=request.data, context={"request": request}
+        # Add the document ID to the request data
+        data = (
+            request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
         )
-
+        data["document"] = document.id
+        serializer = DocumentShareLinkSerializer(
+            data=data, context={"request": request}
+        )
         if serializer.is_valid():
-            serializer.save(document=document, created_by=request.user)
+            serializer.save(created_by=request.user)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+        print(f"Serializer errors: {serializer.errors}")
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=["get"])
     def bulk_download(self, request):
-        document_ids = request.query_params.getlist("ids")
+        # Get the 'ids' parameter - might be a list or a single comma-separated string
+        ids_param = request.query_params.get("ids", "")
+        # Handle different ways the ids might be provided
+        if isinstance(ids_param, str) and "," in ids_param:
+            # Split the comma-separated string into a list of integers
+            document_ids = [
+                int(id_str.strip()) for id_str in ids_param.split(",") if id_str.strip()
+            ]
+        else:
+            # Handle case when ids are provided as multiple parameters
+            document_ids = request.query_params.getlist("ids")
+
         documents = self.get_queryset().filter(id__in=document_ids)
 
         if not documents.exists():
@@ -205,9 +252,14 @@ class DocumentShareLinkViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return super().get_queryset().filter(created_by=self.request.user)
 
-    @action(detail=True, methods=["get"])
-    def download(self, request, pk=None):
-        share_link = self.get_object()
+    @action(detail=False, methods=["get"], url_path="download/(?P<token>[^/.]+)")
+    def download(self, request, token=None):
+        try:
+            share_link = DocumentShareLink.objects.get(token=token)
+        except DocumentShareLink.DoesNotExist:
+            return Response(
+                {"detail": "Share link not found"}, status=status.HTTP_404_NOT_FOUND
+            )
 
         if not share_link.is_valid():
             return Response(

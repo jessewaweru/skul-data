@@ -30,6 +30,11 @@ docker-compose.override.yml
 # System files
 .DS_Store  # macOS system file
 
+# Ignore all PDF files
+*.pdf
+
+# Ignore all DOCX files
+*.docx
 
 #my own readme file
 myREADME.md

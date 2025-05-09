@@ -9,7 +9,7 @@ from django.utils import timezone
 
 
 class DocumentCategory(models.Model):
-    name = models.CharField(max_length=255, unique=True)
+    name = models.CharField(max_length=255)  # Removed unique=True
     description = models.TextField(blank=True, null=True)
     is_custom = models.BooleanField(
         default=False
@@ -28,6 +28,34 @@ class DocumentCategory(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.school.name if self.school else 'System'})"
+
+    def clean(self):
+        # Custom validation logic
+        if self.is_custom and not self.school:
+            raise ValidationError(
+                {"school": "Custom categories must be associated with a school"}
+            )
+
+        # Check for name uniqueness within school context
+        if self.school:
+            qs = DocumentCategory.objects.filter(name=self.name, school=self.school)
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            if qs.exists():
+                raise ValidationError(
+                    {"name": "A category with this name already exists for this school"}
+                )
+
+    def save(self, *args, **kwargs):
+        # System categories must have school=None
+        if not self.is_custom and self.school:
+            raise ValidationError(
+                "System categories cannot be associated with a school"
+            )
+        # Custom categories must have a school
+        if self.is_custom and not self.school:
+            raise ValidationError("Custom categories must be associated with a school")
+        super().save(*args, **kwargs)
 
 
 def document_upload_path(instance, filename):
