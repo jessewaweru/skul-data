@@ -20,11 +20,4 @@ urlpatterns = [
     path(
         "export-calendar/", SchoolCalendarExportView.as_view(), name="export-calendar"
     ),
-    # path("events/create/", SchoolEventCreateView.as_view(), name="event-create"),
-    # path(
-    #     "events/<int:pk>/update/", SchoolEventUpdateView.as_view(), name="event-update"
-    # ),
-    # path(
-    #     "events/<int:pk>/delete/", SchoolEventDeleteView.as_view(), name="event-delete"
-    # ),
 ]

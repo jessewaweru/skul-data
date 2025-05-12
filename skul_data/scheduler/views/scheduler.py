@@ -1,5 +1,5 @@
 from rest_framework import generics, permissions, status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, SAFE_METHODS
 from rest_framework.response import Response
 from rest_framework.generics import CreateAPIView
 from django.db import models
@@ -132,9 +132,15 @@ class SchoolEventDetailView(generics.RetrieveUpdateDestroyAPIView):
         Allow any authenticated user to retrieve,
         but only event creators or admins can update/delete.
         """
-        if self.request.method in ["PUT", "PATCH", "DELETE"]:
-            return [CanManageEvent()]
-        return super().get_permissions()
+        # if self.request.method in ["PUT", "PATCH", "DELETE"]:
+        #     return [CanManageEvent()]
+        # return super().get_permissions()
+
+        if (
+            hasattr(self, "request") and self.request.method in SAFE_METHODS
+        ):  # GET, HEAD, OPTIONS
+            return [IsAuthenticated()]
+        return [CanManageEvent()]
 
     def get_serializer_class(self):
         if self.request.method in ["PUT", "PATCH"]:
@@ -168,7 +174,9 @@ class EventRSVPView(CreateAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if EventRSVP.objects.filter(event=self.event, user=request.user).exists():
+        # Resolve the user before filtering
+        user_id = request.user.id
+        if EventRSVP.objects.filter(event=self.event, user_id=user_id).exists():
             return Response(
                 {"detail": "You have already responded to this event"},
                 status=status.HTTP_400_BAD_REQUEST,

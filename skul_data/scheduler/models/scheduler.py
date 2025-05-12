@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils.timezone import now
 from django.core.exceptions import ValidationError
+from django.db.models import Q
 from django.utils import timezone
 from skul_data.schools.models.schoolclass import SchoolClass
 from skul_data.users.models.teacher import Teacher
@@ -43,7 +44,13 @@ class SchoolEvent(models.Model):
     school = models.ForeignKey(
         "schools.School", on_delete=models.CASCADE, related_name="events", default=None
     )
-
+    # current_term = models.CharField(
+    #     max_length=20,
+    #     choices=[("term_1", "Term 1"), ("term_2", "Term 2"), ("term_3", "Term 3")],
+    #     null=True,
+    #     blank=True,
+    # )
+    # current_school_year = models.CharField(max_length=20, null=True, blank=True)
     # Specific target users
     targeted_teachers = models.ManyToManyField(
         Teacher, blank=True, related_name="teacher_events"
@@ -99,30 +106,56 @@ class SchoolEvent(models.Model):
         return event.current_school_year if event else None
 
     def get_target_users(self):
-        """Get all users who should see this event"""
+        """
+        Returns the users who are targets for this event based on target_type.
+        """
         if self.target_type == "all":
-            return User.objects.filter(school=self.school)
+            # Get all users associated with this school through Teacher and Parent profiles
+            teachers = Teacher.objects.filter(school=self.school).values_list(
+                "user", flat=True
+            )
+            parents = Parent.objects.filter(school=self.school).values_list(
+                "user", flat=True
+            )
+            return User.objects.filter(Q(id__in=teachers) | Q(id__in=parents))
+
         elif self.target_type == "teachers":
-            return User.objects.filter(school=self.school, user_type=User.TEACHER)
+            teacher_users = Teacher.objects.filter(school=self.school).values_list(
+                "user", flat=True
+            )
+            return User.objects.filter(id__in=teacher_users)
+
         elif self.target_type == "parents":
-            return User.objects.filter(school=self.school, user_type=User.PARENT)
+            parent_users = Parent.objects.filter(school=self.school).values_list(
+                "user", flat=True
+            )
+            return User.objects.filter(id__in=parent_users)
+
         elif self.target_type == "specific":
-            teachers = self.targeted_teachers.all().values_list("user", flat=True)
-            parents = self.targeted_parents.all().values_list("user", flat=True)
-            return User.objects.filter(
-                models.Q(id__in=teachers) | models.Q(id__in=parents)
-            )
+            teachers = self.targeted_teachers.values_list("user", flat=True)
+            parents = self.targeted_parents.values_list("user", flat=True)
+            return User.objects.filter(Q(id__in=teachers) | Q(id__in=parents))
+
         elif self.target_type == "classes":
-            # Get teachers assigned to these classes
-            teacher_users = User.objects.filter(
-                teacher_profile__assigned_classes__in=self.targeted_classes.all()
+            # Get teachers assigned to targeted classes
+            teachers = Teacher.objects.filter(
+                assigned_classes__in=self.targeted_classes.all(), school=self.school
+            ).values_list("user", flat=True)
+
+            # Get parents with children in targeted classes - checking both parent FK and guardians
+            parents = (
+                Parent.objects.filter(
+                    Q(primary_students__student_class__in=self.targeted_classes.all())
+                    | Q(
+                        guardian_students__student_class__in=self.targeted_classes.all()
+                    ),
+                    school=self.school,
+                )
+                .distinct()
+                .values_list("user", flat=True)
             )
-            # Get parents of students in these classes
-            parent_users = User.objects.filter(
-                parent_profile__children__school_class__in=self.targeted_classes.all()
-            )
-            return teacher_users.union(parent_users)
-        return User.objects.none()
+
+            return User.objects.filter(Q(id__in=teachers) | Q(id__in=parents))
 
 
 class EventRSVP(models.Model):

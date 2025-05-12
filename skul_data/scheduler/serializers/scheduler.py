@@ -47,8 +47,8 @@ class SchoolEventSerializer(serializers.ModelSerializer):
             "targeted_teachers",
             "targeted_parents",
             "targeted_classes",
-            "current_school_year",
-            "current_term",
+            # "current_school_year",
+            # "current_term",
             "location",
             "is_all_day",
             "attachment",
@@ -73,6 +73,31 @@ class SchoolEventSerializer(serializers.ModelSerializer):
             return False
 
         return not obj.rsvps.filter(user=request.user).exists()
+
+    def create(self, validated_data):
+        # Get user and school from context
+        user = self.context["request"].user
+        school = validated_data.pop("school", None) or user.school
+
+        # Extract many-to-many relationships
+        targeted_teachers = validated_data.pop("targeted_teachers", [])
+        targeted_parents = validated_data.pop("targeted_parents", [])
+        targeted_classes = validated_data.pop("targeted_classes", [])
+
+        # Create the event
+        event = SchoolEvent.objects.create(
+            created_by=user, school=school, **validated_data
+        )
+
+        # Add many-to-many relationships
+        if targeted_teachers:
+            event.targeted_teachers.set(targeted_teachers)
+        if targeted_parents:
+            event.targeted_parents.set(targeted_parents)
+        if targeted_classes:
+            event.targeted_classes.set(targeted_classes)
+
+        return event
 
 
 class CreateSchoolEventSerializer(serializers.ModelSerializer):
@@ -119,18 +144,20 @@ class CreateSchoolEventSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
+        # Remove many-to-many fields first
         targeted_teachers = validated_data.pop("targeted_teachers", [])
         targeted_parents = validated_data.pop("targeted_parents", [])
         targeted_classes = validated_data.pop("targeted_classes", [])
 
-        event = SchoolEvent.objects.create(
-            **validated_data,
-            created_by=self.context["request"].user,
-            school=self.context["request"].user.school
-        )
+        # Create the event with remaining validated_data
+        event = SchoolEvent.objects.create(**validated_data)
 
-        event.targeted_teachers.set(targeted_teachers)
-        event.targeted_parents.set(targeted_parents)
-        event.targeted_classes.set(targeted_classes)
+        # Set many-to-many relationships
+        if targeted_teachers:
+            event.targeted_teachers.set(targeted_teachers)
+        if targeted_parents:
+            event.targeted_parents.set(targeted_parents)
+        if targeted_classes:
+            event.targeted_classes.set(targeted_classes)
 
         return event

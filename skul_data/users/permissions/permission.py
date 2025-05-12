@@ -47,12 +47,35 @@ class CanCreateEvent(BasePermission):
 
 
 class CanManageEvent(BasePermission):
-    def has_object_permission(self, request, view, obj):
+    def has_permission(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
         return (
-            request.user.user_type == User.SCHOOL_ADMIN
-            or obj.created_by == request.user
-            or request.user.role.permissions.filter(code="manage_events").exists()
+            request.user.is_authenticated
+            and request.user.user_type == User.SCHOOL_ADMIN
         )
+
+    def has_object_permission(self, request, view, obj):
+        if not request.user.is_authenticated:
+            return False
+
+        if request.method in SAFE_METHODS:
+            return True
+
+        # School admins always have permission
+        if request.user.user_type == User.SCHOOL_ADMIN:
+            return True
+
+        # Check if user created the event
+        if hasattr(obj, "created_by") and obj.created_by == request.user:
+            return True
+
+        # Check role permissions if role exists
+        if hasattr(request.user, "role") and request.user.role:
+            return request.user.role.permissions.filter(code="manage_events").exists()
+
+        # Default deny
+        return False
 
 
 # === FLEXIBLE, DYNAMIC PERMISSION CHECK ===
