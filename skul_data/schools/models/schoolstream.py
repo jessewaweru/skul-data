@@ -1,5 +1,6 @@
 from django.db import models
 from skul_data.schools.models.school import School
+from django.core.exceptions import ValidationError
 
 
 class SchoolStream(models.Model):
@@ -13,6 +14,20 @@ class SchoolStream(models.Model):
     class Meta:
         unique_together = ("school", "name")  # Only unique within same school
         ordering = ["name"]
+
+    def clean(self):
+        if (
+            SchoolStream.objects.filter(school=self.school, name=self.name)
+            .exclude(pk=self.pk)
+            .exists()
+        ):
+            raise ValidationError(
+                "A stream with this name already exists for this school."
+            )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.name} ({self.school})"

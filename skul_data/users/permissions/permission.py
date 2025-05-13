@@ -24,7 +24,9 @@ class IsPrimaryAdmin(BasePermission):
 class IsAdministrator(BasePermission):
     def has_permission(self, request, view):
         return (
-            request.user.is_authenticated and request.user.user_type == "administrator"
+            request.user.is_authenticated
+            and request.user.user_type == User.SCHOOL_ADMIN
+            and request.user.is_staff
         )
 
 
@@ -234,6 +236,8 @@ MANAGE_CLASSES = "manage_classes"
 VIEW_CLASSES = "view_classes"
 MANAGE_CLASS_DOCUMENTS = "manage_class_documents"
 VIEW_CLASS_DOCUMENTS = "view_class_documents"
+VIEW_CLASS_TIMETABLES = "view_class_timetables"
+MANAGE_CLASS_TIMETABLES = "manage_class_timetables"
 MANAGE_ATTENDANCE = "manage_attendance"
 VIEW_ATTENDANCE = "view_attendance"
 

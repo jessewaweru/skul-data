@@ -32,9 +32,11 @@ urlpatterns = [
     path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("users/", include("skul_data.users.urls")),
-    path("schools/", include("skul_data.schools.urls")),
+    path(
+        "schools/",
+        include(("skul_data.schools.urls", "schools"), namespace="schools"),
+    ),
     path("students/", include("skul_data.students.urls")),
-    # path("scheduler/", include("skul_data.scheduler.urls")),
     path(
         "scheduler/",
         include(("skul_data.scheduler.urls", "scheduler"), namespace="scheduler"),

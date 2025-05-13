@@ -27,25 +27,20 @@ from skul_data.students.models.student import Student, Subject
 from skul_data.schools.models.school import School
 from django.core.files.uploadedfile import SimpleUploadedFile
 import os
+from skul_data.tests.classes_tests.test_helpers import (
+    create_test_school,
+    create_test_student,
+    create_test_teacher,
+)
 
 
 class SchoolClassSerializerTest(TestCase):
     def setUp(self):
-        self.school = School.objects.create(name="Test School")
-        self.teacher = Teacher.objects.create(
-            user=User.objects.create_user(
-                email="teacher@test.com", password="testpass"
-            ),
-            school=self.school,
-        )
+        self.school, self.admin_user = create_test_school()
+        self.teacher = create_test_teacher(self.school)
         self.stream = SchoolStream.objects.create(school=self.school, name="West")
         self.subject = Subject.objects.create(name="Math", school=self.school)
-        self.student = Student.objects.create(
-            first_name="John",
-            last_name="Doe",
-            admission_number="123",
-            school=self.school,
-        )
+        self.student = create_test_student(self.school)
 
         self.class_data = {
             "name": "Grade 1 West",
@@ -80,6 +75,9 @@ class SchoolClassSerializerTest(TestCase):
             "academic_year": "2023-2024",
             "room_number": "102",
             "capacity": 30,
+            "school": self.school.id,
+            "stream": self.stream.id,
+            "class_teacher": self.teacher.id,
         }
         serializer = SchoolClassCreateSerializer(
             data=data, context={"request": self._get_request()}
@@ -87,9 +85,36 @@ class SchoolClassSerializerTest(TestCase):
         self.assertTrue(serializer.is_valid())
 
     def test_school_class_create_duplicate(self):
-        SchoolClass.objects.create(**self.class_data)
+        # Now try to create a duplicate with the same name/school/year
+        duplicate_data = {
+            "name": self.class_data["name"],  # Same name
+            "grade_level": self.class_data["grade_level"],
+            "level": self.class_data["level"],
+            "school": self.school,  # Same school
+            "academic_year": self.class_data["academic_year"],  # Same year
+            "room_number": "102",  # Different room
+            "capacity": 25,  # Different capacity
+        }
         serializer = SchoolClassCreateSerializer(
-            data=self.class_data, context={"request": self._get_request()}
+            data=duplicate_data, context={"request": self._get_request()}
+        )
+        with self.assertRaises(ValidationError):
+            serializer.is_valid(raise_exception=True)
+
+    def test_class_create_duplicate_grade_stream_year(self):
+        """Test that duplicate grade_level/stream/academic_year combinations are prevented"""
+        duplicate_data = {
+            "name": "Different Name",  # Different name
+            "grade_level": self.class_data["grade_level"],  # Same grade
+            "level": self.class_data["level"],
+            "academic_year": self.class_data["academic_year"],  # Same year
+            "room_number": "102",
+            "capacity": 25,
+            "stream": self.stream.id if self.stream else None,  # Same stream
+        }
+
+        serializer = SchoolClassCreateSerializer(
+            data=duplicate_data, context={"request": self._get_request()}
         )
         with self.assertRaises(ValidationError):
             serializer.is_valid(raise_exception=True)
@@ -116,7 +141,7 @@ class SchoolClassSerializerTest(TestCase):
 
 class ClassTimetableSerializerTest(TestCase):
     def setUp(self):
-        self.school = School.objects.create(name="Test School")
+        self.school, self.admin_user = create_test_school()
         self.school_class = SchoolClass.objects.create(
             name="Grade 1",
             grade_level="Grade 1",
@@ -146,7 +171,7 @@ class ClassTimetableSerializerTest(TestCase):
 
 class ClassDocumentSerializerTest(TestCase):
     def setUp(self):
-        self.school = School.objects.create(name="Test School")
+        self.school, self.admin_user = create_test_school()
         self.user = User.objects.create_user(email="test@test.com", password="testpass")
         self.school_class = SchoolClass.objects.create(
             name="Grade 1",
@@ -182,14 +207,9 @@ class ClassDocumentSerializerTest(TestCase):
 
 class ClassAttendanceSerializerTest(TestCase):
     def setUp(self):
-        self.school = School.objects.create(name="Test School")
+        self.school, self.admin_user = create_test_school()
         self.user = User.objects.create_user(email="test@test.com", password="testpass")
-        self.student = Student.objects.create(
-            first_name="John",
-            last_name="Doe",
-            admission_number="123",
-            school=self.school,
-        )
+        self.student = create_test_student(self.school)
         self.school_class = SchoolClass.objects.create(
             name="Grade 1",
             grade_level="Grade 1",
@@ -215,7 +235,7 @@ class ClassAttendanceSerializerTest(TestCase):
 
 class SchoolStreamSerializerTest(TestCase):
     def setUp(self):
-        self.school = School.objects.create(name="Test School")
+        self.school, self.admin_user = create_test_school()
 
     def test_stream_serializer(self):
         stream = SchoolStream.objects.create(
@@ -249,10 +269,8 @@ class SchoolStreamSerializerTest(TestCase):
 
         factory = APIRequestFactory()
         request = factory.get("/")
-        request.user = User.objects.create_user(
-            email="admin@test.com", password="testpass"
-        )
-        request.user.school = self.school
+        # Use the admin user created in setUp
+        request.user = self.admin_user
         return request
 
 

@@ -5,12 +5,12 @@ from skul_data.schools.models.schoolclass import (
     ClassDocument,
     ClassAttendance,
 )
-
-# from skul_data.users.serializers.teacher import TeacherSerializer
+from skul_data.schools.models.school import School
 from skul_data.students.serializers.student import StudentSerializer, SubjectSerializer
 from skul_data.users.serializers.base_user import BaseUserSerializer
 from skul_data.schools.serializers.schoolstream import SchoolStreamSerializer
 from skul_data.schools.models.schoolstream import SchoolStream
+from django.core.exceptions import ValidationError
 
 
 class SchoolClassSerializer(serializers.ModelSerializer):
@@ -75,6 +75,10 @@ class SchoolClassSerializer(serializers.ModelSerializer):
 
 
 class SchoolClassCreateSerializer(serializers.ModelSerializer):
+    school = serializers.PrimaryKeyRelatedField(
+        queryset=School.objects.all(), required=True  # Make sure this is required
+    )
+
     class Meta:
         model = SchoolClass
         fields = [
@@ -86,20 +90,32 @@ class SchoolClassCreateSerializer(serializers.ModelSerializer):
             "academic_year",
             "room_number",
             "capacity",
+            "school",
         ]
 
     def validate(self, data):
-        """Example: Prevent duplicate class names within same academic year"""
         school = self.context["request"].user.school
+        request = self.context["request"]
+
+        # Check for duplicate name/school/year
         if SchoolClass.objects.filter(
-            school=school,
+            name=data["name"], school=school, academic_year=data["academic_year"]
+        ).exists():
+            raise serializers.ValidationError(
+                "A class with this name already exists for this school and academic year."
+            )
+
+        # NEW: Check for duplicate grade_level/stream/year
+        if SchoolClass.objects.filter(
             grade_level=data["grade_level"],
             stream=data.get("stream"),
+            school=school,
             academic_year=data["academic_year"],
         ).exists():
             raise serializers.ValidationError(
-                "A class with these attributes already exists"
+                "A class with this grade level, stream and academic year already exists."
             )
+
         return data
 
 

@@ -9,48 +9,29 @@ from skul_data.schools.models.schoolclass import (
     ClassDocument,
 )
 from skul_data.schools.models.schoolstream import SchoolStream
-from skul_data.users.models.base_user import User
-from skul_data.users.models.teacher import Teacher
-from skul_data.schools.models.school import School
+from skul_data.tests.classes_tests.test_helpers import (
+    create_test_parent,
+    create_test_school,
+    create_test_teacher,
+)
 
 
 class ClassPermissionsTest(APITestCase):
     def setUp(self):
-        # Create schools
-        self.school1 = School.objects.create(name="Test School 1")
-        self.school2 = School.objects.create(name="Test School 2")
-
-        # Create admin users
-        self.school1_admin = User.objects.create_user(
-            email="admin1@test.com", password="testpass", user_type=User.SCHOOL_ADMIN
-        )
-        self.school1_admin.school_admin_profile.school = self.school1
-        self.school1_admin.school_admin_profile.save()
-
-        self.school2_admin = User.objects.create_user(
-            email="admin2@test.com", password="testpass", user_type=User.SCHOOL_ADMIN
-        )
-        self.school2_admin.school_admin_profile.school = self.school2
-        self.school2_admin.school_admin_profile.save()
+        # Create schools with admins using helper function
+        self.school1, self.school1_admin = create_test_school(name="Test School 1")
+        self.school2, self.school2_admin = create_test_school(name="Test School 2")
 
         # Create teachers
-        self.school1_teacher = Teacher.objects.create(
-            user=User.objects.create_user(
-                email="teacher1@test.com", password="testpass"
-            ),
-            school=self.school1,
+        self.school1_teacher = create_test_teacher(
+            school=self.school1, email="teacher1@test.com"
         )
-        self.school2_teacher = Teacher.objects.create(
-            user=User.objects.create_user(
-                email="teacher2@test.com", password="testpass"
-            ),
-            school=self.school2,
+        self.school2_teacher = create_test_teacher(
+            school=self.school2, email="teacher2@test.com"
         )
 
         # Create parent user (should have no access)
-        self.parent = User.objects.create_user(
-            email="parent@test.com", password="testpass", user_type=User.PARENT
-        )
+        self.parent = create_test_parent(school=self.school1, email="parent@test.com")
 
         # Create test data
         self.stream1 = SchoolStream.objects.create(school=self.school1, name="West")
@@ -87,20 +68,30 @@ class ClassPermissionsTest(APITestCase):
 
     def test_admin_can_access_own_school_classes(self):
         self.client.force_authenticate(user=self.school1_admin)
-        response = self.client.get(reverse("schoolclass-list"))
+
+        # Verify test data first
+        db_count = SchoolClass.objects.filter(school=self.school1).count()
+        print(f"Test setup verification - Classes in DB for school1: {db_count}")
+
+        response = self.client.get(reverse("schools:class-list"), {"no_page": True})
+
+        print(f"Response status: {response.status_code}")
+        print(f"Response data count: {len(response.data)}")
+        print(f"Response data: {response.data}")
+
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)  # school1_class and unassigned_class
+        self.assertEqual(len(response.data), db_count)
 
     def test_admin_cannot_access_other_school_classes(self):
         self.client.force_authenticate(user=self.school1_admin)
         response = self.client.get(
-            reverse("schoolclass-detail", kwargs={"pk": self.school2_class.id})
+            reverse("schools:class-detail", kwargs={"pk": self.school2_class.id})
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_teacher_can_access_assigned_classes(self):
         self.client.force_authenticate(user=self.school1_teacher.user)
-        response = self.client.get(reverse("schoolclass-list"))
+        response = self.client.get(reverse("schools:class-list"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)  # Only their assigned class
         self.assertEqual(response.data[0]["id"], self.school1_class.id)
@@ -108,17 +99,19 @@ class ClassPermissionsTest(APITestCase):
     def test_teacher_cannot_access_unassigned_classes(self):
         self.client.force_authenticate(user=self.school1_teacher.user)
         response = self.client.get(
-            reverse("schoolclass-detail", kwargs={"pk": self.unassigned_class.id})
+            reverse("schools:class-detail", kwargs={"pk": self.unassigned_class.id})
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_parent_cannot_access_classes(self):
-        self.client.force_authenticate(user=self.parent)
-        response = self.client.get(reverse("schoolclass-list"))
+        self.client.force_authenticate(
+            user=self.parent.user
+        )  # Use parent.user instead of parent
+        response = self.client.get(reverse("schools:class-list"))
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_anonymous_cannot_access_classes(self):
-        response = self.client.get(reverse("schoolclass-list"))
+        response = self.client.get(reverse("schools:class-list"))
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     # ================ ClassTimetable Permissions ================
@@ -129,7 +122,7 @@ class ClassPermissionsTest(APITestCase):
             "timetable.pdf", b"file_content", content_type="application/pdf"
         )
         response = self.client.post(
-            reverse("classtimetable-list"),
+            reverse("schools:class-timetable-list"),
             data={
                 "school_class": self.school1_class.id,
                 "file": test_file,
@@ -150,7 +143,7 @@ class ClassPermissionsTest(APITestCase):
 
         self.client.force_authenticate(user=self.school1_teacher.user)
         response = self.client.get(
-            reverse("classtimetable-detail", kwargs={"pk": timetable.id})
+            reverse("schools:class-timetable-detail", kwargs={"pk": timetable.id})
         )
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
@@ -160,7 +153,7 @@ class ClassPermissionsTest(APITestCase):
             "timetable.pdf", b"file_content", content_type="application/pdf"
         )
         response = self.client.post(
-            reverse("classtimetable-list"),
+            reverse("schools:class-timetable-list"),
             data={
                 "school_class": self.school1_class.id,
                 "file": test_file,
@@ -178,7 +171,7 @@ class ClassPermissionsTest(APITestCase):
             "document.pdf", b"file_content", content_type="application/pdf"
         )
         response = self.client.post(
-            reverse("classdocument-list"),
+            reverse("schools:class-document-list"),
             data={
                 "school_class": self.school1_class.id,
                 "title": "Test Document",
@@ -195,7 +188,7 @@ class ClassPermissionsTest(APITestCase):
             "document.pdf", b"file_content", content_type="application/pdf"
         )
         response = self.client.post(
-            reverse("classdocument-list"),
+            reverse("schools:class-document-list"),
             data={
                 "school_class": self.unassigned_class.id,
                 "title": "Test Document",
@@ -211,7 +204,7 @@ class ClassPermissionsTest(APITestCase):
     def test_teacher_can_take_attendance_for_assigned_classes(self):
         self.client.force_authenticate(user=self.school1_teacher.user)
         response = self.client.post(
-            reverse("classattendance-list"),
+            reverse("schools:class-attendance-list"),
             data={"school_class": self.school1_class.id, "date": "2023-01-01"},
             format="json",
         )
@@ -220,7 +213,7 @@ class ClassPermissionsTest(APITestCase):
     def test_teacher_cannot_take_attendance_for_unassigned_classes(self):
         self.client.force_authenticate(user=self.school1_teacher.user)
         response = self.client.post(
-            reverse("classattendance-list"),
+            reverse("schools:class-attendance-list"),
             data={"school_class": self.unassigned_class.id, "date": "2023-01-01"},
             format="json",
         )
@@ -232,7 +225,7 @@ class ClassPermissionsTest(APITestCase):
         # Teacher cannot create streams
         self.client.force_authenticate(user=self.school1_teacher.user)
         response = self.client.post(
-            reverse("schoolstream-list"),
+            reverse("schools:stream-list"),
             data={"name": "New Stream", "description": "Test Stream"},
             format="json",
         )
@@ -241,7 +234,7 @@ class ClassPermissionsTest(APITestCase):
         # Admin can create streams
         self.client.force_authenticate(user=self.school1_admin)
         response = self.client.post(
-            reverse("schoolstream-list"),
+            reverse("schools:stream-list"),
             data={"name": "New Stream", "description": "Test Stream"},
             format="json",
         )
@@ -250,7 +243,7 @@ class ClassPermissionsTest(APITestCase):
     def test_admin_cannot_manage_other_school_streams(self):
         self.client.force_authenticate(user=self.school1_admin)
         response = self.client.get(
-            reverse("schoolstream-detail", kwargs={"pk": self.stream2.id})
+            reverse("schools:stream-detail", kwargs={"pk": self.stream2.id})
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 

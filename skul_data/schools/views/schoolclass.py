@@ -20,6 +20,12 @@ from skul_data.schools.serializers.schoolclass import (
 )
 from skul_data.users.permissions.permission import IsTeacher, IsAdministrator
 from skul_data.users.models.base_user import User
+from django.db import models
+from skul_data.users.permissions.permission import HasRolePermission
+from skul_data.students.models.student import Student
+from django.db.models import Q
+from rest_framework.exceptions import PermissionDenied
+from skul_data.users.models.school_admin import SchoolAdmin
 
 
 class SchoolClassViewSet(viewsets.ModelViewSet):
@@ -35,6 +41,7 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
         "school",
     ]
     search_fields = ["name", "room_number"]
+    permission_classes = [HasRolePermission]
 
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:
@@ -46,26 +53,48 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ["create", "update", "destroy", "promote", "assign_teacher"]:
             return [IsAdministrator()]
-        elif self.action in ["retrieve", "list"]:
-            return [IsAuthenticated()]
-        return [IsTeacher()]
+        elif self.action in ["retrieve", "list", "analytics"]:
+            # Allow both admins and teachers
+            return [IsAuthenticated(), HasRolePermission()]
+        return [IsAuthenticated()]
+
+    # Set required permissions for HasRolePermission
+    required_permission_get = "view_classes"
+    required_permission_post = "manage_classes"
+    required_permission_put = "manage_classes"
+    required_permission_delete = "manage_classes"
 
     def get_queryset(self):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if user.user_type == User.SCHOOL_ADMIN:
-            return queryset
-
-        school = getattr(user, "school", None)
-        if not school:
+        if not user.is_authenticated:
             return SchoolClass.objects.none()
 
-        queryset = queryset.filter(school=school)
+        # Get school for admin
+        if user.user_type == User.SCHOOL_ADMIN:
+            try:
+                # Access the related SchoolAdmin object and its school
+                admin_profile = SchoolAdmin.objects.get(user=user)
+                school = admin_profile.school
+                print(f"Admin school from profile: {school}")
+            except SchoolAdmin.DoesNotExist:
+                print("SchoolAdmin profile not found")
+                return SchoolClass.objects.none()
+        else:
+            school = getattr(user, "school", None)
 
-        # Teachers can only see classes they teach
+        if not school:
+            print("No school found for user")
+            return SchoolClass.objects.none()
+
+        # Filter by school
+        queryset = queryset.filter(school=school)
+        print(f"Filtered queryset count: {queryset.count()}")
+
+        # Additional filtering for teachers
         if user.user_type == "teacher":
-            return queryset.filter(class_teacher=user.teacher_profile)
+            queryset = queryset.filter(class_teacher=user.teacher_profile)
 
         return queryset
 
@@ -88,7 +117,6 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"])
     def assign_teacher(self, request, pk=None):
-        """Assign or change class teacher"""
         class_instance = self.get_object()
         teacher_id = request.data.get("teacher_id")
 
@@ -98,7 +126,10 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            from users.models import Teacher
+            # Update this import to match your actual Teacher model location
+            from skul_data.users.models.teacher import (
+                Teacher,
+            )  # or wherever your Teacher model is
 
             teacher = Teacher.objects.get(id=teacher_id, school=class_instance.school)
             class_instance.class_teacher = teacher
@@ -149,23 +180,39 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
 class ClassTimetableViewSet(viewsets.ModelViewSet):
     queryset = ClassTimetable.objects.all()
     serializer_class = ClassTimetableSerializer
-    permission_classes = [IsAdministrator | IsTeacher]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["school_class", "is_active"]
+
+    # Fix: Don't override permission_classes twice - remove one
+    permission_classes = [IsAuthenticated, HasRolePermission]
+
+    # Set specific permissions
+    required_permission_get = "view_class_timetables"
+    required_permission_post = "manage_class_timetables"
+    required_permission_put = "manage_class_timetables"
+    required_permission_delete = "manage_class_timetables"
 
     def get_queryset(self):
         queryset = super().get_queryset()
         user = self.request.user
 
+        # Get the user's school
+        school = None
         if user.user_type == User.SCHOOL_ADMIN:
-            return queryset
+            try:
+                school = user.schooladmin.school
+            except AttributeError:
+                return ClassTimetable.objects.none()
+        elif hasattr(user, "school"):
+            school = user.school
 
-        school = getattr(user, "school", None)
         if not school:
             return ClassTimetable.objects.none()
 
+        # Filter by school
         queryset = queryset.filter(school_class__school=school)
 
+        # Teachers can only see their assigned classes' timetables
         if user.user_type == "teacher":
             return queryset.filter(school_class__class_teacher=user.teacher_profile)
 
@@ -175,24 +222,32 @@ class ClassTimetableViewSet(viewsets.ModelViewSet):
 class ClassDocumentViewSet(viewsets.ModelViewSet):
     queryset = ClassDocument.objects.all()
     serializer_class = ClassDocumentSerializer
-    permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ["school_class", "document_type", "created_by"]
     search_fields = ["title", "description"]
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         queryset = super().get_queryset()
         user = self.request.user
 
+        # Get the user's school
+        school = None
         if user.user_type == User.SCHOOL_ADMIN:
-            return queryset
+            try:
+                school = user.schooladmin.school
+            except AttributeError:
+                return ClassDocument.objects.none()
+        elif hasattr(user, "school"):
+            school = user.school
 
-        school = getattr(user, "school", None)
         if not school:
             return ClassDocument.objects.none()
 
+        # Filter by school
         queryset = queryset.filter(school_class__school=school)
 
+        # Teachers can only see documents for classes they teach
         if user.user_type == "teacher":
             return queryset.filter(
                 models.Q(school_class__class_teacher=user.teacher_profile)
@@ -202,6 +257,21 @@ class ClassDocumentViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
+        # Check if teacher is assigned to the class
+        school_class = serializer.validated_data.get("school_class")
+        user = self.request.user
+
+        if (
+            user.user_type == "teacher"
+            and school_class.class_teacher != user.teacher_profile
+        ):
+            # If teacher is not assigned to this class, raise permission error
+            from rest_framework.exceptions import PermissionDenied
+
+            raise PermissionDenied(
+                "You can only create documents for classes you teach"
+            )
+
         serializer.save(created_by=self.request.user)
 
 
@@ -211,6 +281,13 @@ class ClassAttendanceViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdministrator | IsTeacher]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["school_class", "date", "taken_by"]
+    permission_classes = [IsAuthenticated, HasRolePermission]
+
+    # Set specific permissions
+    required_permission_get = "view_attendance"
+    required_permission_post = "manage_attendance"
+    required_permission_put = "manage_attendance"
+    required_permission_delete = "manage_attendance"
 
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -234,7 +311,21 @@ class ClassAttendanceViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        serializer.save(taken_by=self.request.user)
+        user = self.request.user
+        school_class = serializer.validated_data.get("school_class")
+
+        # Additional check for teachers
+        if (
+            user.user_type == "teacher"
+            and school_class.class_teacher != user.teacher_profile
+        ):
+            raise PermissionDenied(
+                "You can only take attendance for your assigned classes"
+            )
+
+        serializer.save(taken_by=user)
+
+    required_permission_post = "manage_attendance"
 
     @action(detail=True, methods=["post"])
     def mark_attendance(self, request, pk=None):
@@ -247,11 +338,18 @@ class ClassAttendanceViewSet(viewsets.ModelViewSet):
             )
 
         try:
-            from skul_data.students.models.student import Student
-
+            # Use student_class instead of school_class
             students = Student.objects.filter(
-                id__in=student_ids, school_class=attendance.school_class
+                id__in=student_ids,
+                student_class=attendance.school_class,  # Changed to student_class
             )
+
+            if not students.exists():
+                return Response(
+                    {"error": "No students found for this class"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
             attendance.present_students.set(students)
             return Response(
                 ClassAttendanceSerializer(attendance).data, status=status.HTTP_200_OK

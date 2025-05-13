@@ -2,6 +2,7 @@ from django.test import TestCase
 import os
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.exceptions import ValidationError
+from django.db import IntegrityError
 from django.utils import timezone
 from skul_data.schools.models.schoolclass import (
     SchoolClass,
@@ -11,28 +12,22 @@ from skul_data.schools.models.schoolclass import (
 )
 from skul_data.schools.models.schoolstream import SchoolStream
 from skul_data.users.models.base_user import User
-from skul_data.users.models.teacher import Teacher
 from skul_data.students.models.student import Student, Subject
 from skul_data.schools.models.school import School
+from skul_data.tests.classes_tests.test_helpers import (
+    create_test_school,
+    create_test_student,
+    create_test_teacher,
+)
 
 
 class SchoolClassModelTest(TestCase):
     def setUp(self):
-        self.school = School.objects.create(name="Test School", motto="Test Motto")
-        self.teacher = Teacher.objects.create(
-            user=User.objects.create_user(
-                email="teacher@test.com", password="testpass"
-            ),
-            school=self.school,
-        )
+        self.school, self.admin_user = create_test_school()
+        self.teacher = create_test_teacher(self.school)
         self.stream = SchoolStream.objects.create(school=self.school, name="West")
         self.subject = Subject.objects.create(name="Math", school=self.school)
-        self.student = Student.objects.create(
-            first_name="John",
-            last_name="Doe",
-            admission_number="123",
-            school=self.school,
-        )
+        self.student = create_test_student(self.school)
 
         self.class_data = {
             "name": "Grade 1 West",
@@ -43,6 +38,11 @@ class SchoolClassModelTest(TestCase):
             "room_number": "101",
             "capacity": 30,
         }
+
+    def tearDown(self):
+        # Clear all created objects
+        SchoolClass.objects.all().delete()
+        SchoolStream.objects.all().delete()
 
     def test_create_school_class(self):
         school_class = SchoolClass.objects.create(**self.class_data)
@@ -77,7 +77,7 @@ class SchoolClassModelTest(TestCase):
 
 class ClassTimetableModelTest(TestCase):
     def setUp(self):
-        self.school = School.objects.create(name="Test School")
+        self.school, self.admin_user = create_test_school()
         self.school_class = SchoolClass.objects.create(
             name="Grade 1",
             grade_level="Grade 1",
@@ -103,7 +103,7 @@ class ClassTimetableModelTest(TestCase):
 
 class ClassDocumentModelTest(TestCase):
     def setUp(self):
-        self.school = School.objects.create(name="Test School")
+        self.school, self.admin_user = create_test_school()
         self.user = User.objects.create_user(email="test@test.com", password="testpass")
         self.school_class = SchoolClass.objects.create(
             name="Grade 1",
@@ -135,14 +135,9 @@ class ClassDocumentModelTest(TestCase):
 
 class ClassAttendanceModelTest(TestCase):
     def setUp(self):
-        self.school = School.objects.create(name="Test School")
+        self.school, self.admin_user = create_test_school()
         self.user = User.objects.create_user(email="test@test.com", password="testpass")
-        self.student = Student.objects.create(
-            first_name="John",
-            last_name="Doe",
-            admission_number="123",
-            school=self.school,
-        )
+        self.student = create_test_student(self.school)
         self.school_class = SchoolClass.objects.create(
             name="Grade 1",
             grade_level="Grade 1",
@@ -150,6 +145,18 @@ class ClassAttendanceModelTest(TestCase):
             academic_year="2023-2024",
         )
         self.school_class.students.add(self.student)
+
+    def tearDown(self):
+        # Use try/except to ensure the tearDown doesn't fail even if transaction is broken
+        try:
+            ClassAttendance.objects.all().delete()
+            self.school_class.delete()
+            self.student.delete()
+            self.user.delete()
+            self.school.delete()
+        except Exception:
+            # If there's an error during cleanup, we'll use TestCase's rollback capability
+            pass
 
     def test_create_attendance(self):
         attendance = ClassAttendance.objects.create(
@@ -165,18 +172,27 @@ class ClassAttendanceModelTest(TestCase):
 
     def test_unique_constraint(self):
         date = timezone.now().date()
+        # First creation
         ClassAttendance.objects.create(
             school_class=self.school_class, date=date, taken_by=self.user
         )
-        with self.assertRaises(ValidationError):
-            ClassAttendance.objects.create(
-                school_class=self.school_class, date=date, taken_by=self.user
-            )
+
+        # Use atomic block to isolate the expected integrity error
+        from django.db import transaction
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                ClassAttendance.objects.create(
+                    school_class=self.school_class, date=date, taken_by=self.user
+                )
 
 
 class SchoolStreamModelTest(TestCase):
     def setUp(self):
-        self.school = School.objects.create(name="Test School")
+        self.school, self.admin_user = create_test_school()
+
+    def tearDown(self):
+        SchoolStream.objects.all().delete()
 
     def test_create_stream(self):
         stream = SchoolStream.objects.create(

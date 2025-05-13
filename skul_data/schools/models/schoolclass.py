@@ -1,5 +1,6 @@
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.core.exceptions import ValidationError
 from skul_data.schools.models.school import School
 
 
@@ -109,6 +110,22 @@ class SchoolClass(models.Model):
         new_class.subjects.set(self.subjects.all())
 
         return new_class
+
+    def clean(self):
+        if (
+            SchoolClass.objects.filter(
+                name=self.name, school=self.school, academic_year=self.academic_year
+            )
+            .exclude(pk=self.pk)
+            .exists()
+        ):
+            raise ValidationError(
+                "A class with this name already exists for this school and academic year."
+            )
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
 
 class ClassTimetable(models.Model):
