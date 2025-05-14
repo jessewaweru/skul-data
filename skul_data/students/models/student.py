@@ -146,26 +146,30 @@ class Student(models.Model):
     def phone_number(self):
         """Get primary parent's phone number"""
         if self.parent:
-            return self.parent.user.phone_number
-        return (
-            self.guardians.first().user.phone_number
-            if self.guardians.exists()
-            else None
-        )
+            return (
+                self.parent.phone_number
+            )  # Access phone_number directly from Parent model
+        if self.guardians.exists():
+            return self.guardians.first().phone_number
+        return None
 
     @property
     def email(self):
         """Get primary parent's email"""
         if self.parent:
-            return self.parent.user.email
-        return self.guardians.first().user.email if self.guardians.exists() else None
+            return self.parent.user.email  # Email is on User model
+        if self.guardians.exists():
+            return self.guardians.first().user.email
+        return None
 
     @property
     def address(self):
         """Get primary parent's address"""
         if self.parent:
-            return self.parent.user.address
-        return self.guardians.first().user.address if self.guardians.exists() else None
+            return self.parent.address  # Access address directly from Parent model
+        if self.guardians.exists():
+            return self.guardians.first().address
+        return None
 
 
 class StudentStatusChange(models.Model):

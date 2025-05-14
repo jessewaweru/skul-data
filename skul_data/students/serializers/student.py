@@ -13,6 +13,7 @@ from skul_data.users.models.teacher import Teacher
 from skul_data.users.serializers.parent import ParentSerializer
 from django.utils import timezone
 from skul_data.students.models.student import AttendanceStatus, StudentAttendance
+from rest_framework.exceptions import ValidationError
 
 
 class StudentDocumentSerializer(serializers.ModelSerializer):
@@ -43,6 +44,8 @@ class StudentStatusChangeSerializer(serializers.ModelSerializer):
 
 
 class StudentCreateSerializer(serializers.ModelSerializer):
+    status = serializers.CharField(default="ACTIVE")
+
     class Meta:
         model = Student
         fields = [
@@ -59,11 +62,42 @@ class StudentCreateSerializer(serializers.ModelSerializer):
             "email",
             "medical_notes",
             "special_needs",
+            "status",
         ]
 
+    def validate(self, data):
+        # Set default status to ACTIVE if not provided
+        if "status" not in data:
+            data["status"] = "ACTIVE"
+
+        # If status is provided, ensure it's ACTIVE for new students
+        if data.get("status") != "ACTIVE":
+            raise serializers.ValidationError(
+                {
+                    "status": "Cannot set status directly on creation. New students are always ACTIVE."
+                }
+            )
+        return data
+
     def create(self, validated_data):
-        # Generate admission number
+        # Get school from request context
+        request = self.context.get("request")
+        if request and hasattr(request.user, "schooladmin"):
+            validated_data["school"] = request.user.schooladmin.school
+        else:
+            # For testing purposes, try to get school from student_class if available
+            student_class = validated_data.get("student_class")
+            if student_class:
+                validated_data["school"] = student_class.school
+
         school = validated_data.get("school")
+        if not school:
+            raise serializers.ValidationError(
+                {
+                    "school": "School is required. Either provide a schooladmin user in context or a student_class with a school."
+                }
+            )
+
         year = timezone.now().year
         last_student = (
             Student.objects.filter(school=school, admission_date__year=year)
@@ -72,12 +106,31 @@ class StudentCreateSerializer(serializers.ModelSerializer):
         )
 
         if last_student:
-            last_number = int(last_student.admission_number.split("-")[-1])
-            new_number = last_number + 1
+            try:
+                # Try to extract the number by splitting on hyphens
+                parts = last_student.admission_number.split("-")
+                if len(parts) > 1:
+                    last_number = int(parts[-1])
+                else:
+                    # If no hyphens, try to extract numeric part from the end of string
+                    # Find the numeric suffix after extracting any digits
+                    import re
+
+                    match = re.search(r"(\d+)$", last_student.admission_number)
+                    if match:
+                        last_number = int(match.group())
+                    else:
+                        # If no numeric pattern found, start from 1
+                        last_number = 0
+                new_number = last_number + 1
+            except (ValueError, IndexError):
+                # If parsing fails for any reason, start from 1
+                new_number = 1
         else:
             new_number = 1
 
         validated_data["admission_number"] = f"{school.code}-{year}-{new_number:04d}"
+        validated_data["admission_date"] = timezone.now().date()  # Set admission date
         return super().create(validated_data)
 
 
@@ -212,9 +265,11 @@ class StudentSerializer(serializers.ModelSerializer):
         return value
 
     def validate_status(self, value):
-        # Only apply this check on creation
-        if self.instance is None and value != "ACTIVE":
-            raise serializers.ValidationError("New students must be ACTIVE by default")
+        # Prevent direct status updates (should use status change endpoint)
+        if self.instance and self.instance.status != value:
+            raise serializers.ValidationError(
+                "Status cannot be updated directly. Use the status change endpoint."
+            )
         return value
 
     def validate(self, data):

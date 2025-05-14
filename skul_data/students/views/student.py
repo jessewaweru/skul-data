@@ -84,6 +84,38 @@ class StudentViewSet(viewsets.ModelViewSet):
             return [IsAdministrator()]
         return [IsAuthenticated()]
 
+    # def get_queryset(self):
+    #     queryset = super().get_queryset()
+    #     user = self.request.user
+
+    #     if user.user_type == User.SCHOOL_ADMIN:
+    #         return queryset
+
+    #     school = getattr(user, "school", None)
+    #     if not school:
+    #         return Student.objects.none()
+
+    #     queryset = queryset.filter(school=school)
+
+    #     # Only show active students by default
+    #     if not self.request.query_params.get("show_inactive"):
+    #         queryset = queryset.filter(is_active=True)
+
+    #     # Teachers only see students in their classes
+    #     if user.user_type == "teacher":
+    #         return queryset.filter(
+    #             Q(teacher=user.teacher_profile)
+    #             | Q(student_class__class_teacher=user.teacher_profile)
+    #         )
+
+    #     # Parents only see their own children
+    #     elif user.user_type == "parent":
+    #         return queryset.filter(
+    #             Q(parent=user.parent_profile) | Q(guardians=user.parent_profile)
+    #         ).distinct()
+
+    #     return queryset
+
     def get_queryset(self):
         queryset = super().get_queryset()
         user = self.request.user
@@ -103,16 +135,25 @@ class StudentViewSet(viewsets.ModelViewSet):
 
         # Teachers only see students in their classes
         if user.user_type == "teacher":
-            return queryset.filter(
-                Q(teacher=user.teacher_profile)
-                | Q(student_class__class_teacher=user.teacher_profile)
-            )
+            # Make sure this condition correctly checks for students in classes where
+            # the teacher is assigned as the class teacher
+            teacher_profile = getattr(user, "teacher_profile", None)
+            if teacher_profile:
+                queryset = queryset.filter(
+                    Q(student_class__class_teacher=teacher_profile)
+                )
+            else:
+                return Student.objects.none()
 
         # Parents only see their own children
         elif user.user_type == "parent":
-            return queryset.filter(
-                Q(parent=user.parent_profile) | Q(guardians=user.parent_profile)
-            ).distinct()
+            parent_profile = getattr(user, "parent_profile", None)
+            if parent_profile:
+                queryset = queryset.filter(
+                    Q(parent=parent_profile) | Q(guardians=parent_profile)
+                ).distinct()
+            else:
+                return Student.objects.none()
 
         return queryset
 
@@ -387,6 +428,20 @@ class StudentAttendanceViewSet(viewsets.ModelViewSet):
     filterset_class = StudentAttendanceFilter
     search_fields = ["student__first_name", "student__last_name", "notes", "reason"]
 
+    # def get_permissions(self):
+    #     if self.action in [
+    #         "create",
+    #         "update",
+    #         "partial_update",
+    #         "destroy",
+    #         "bulk_create",
+    #     ]:
+    #         return [
+    #             IsAdministrator(),
+    #             IsTeacher(),
+    #         ]
+    #     return [IsAuthenticated()]
+
     def get_permissions(self):
         if self.action in [
             "create",
@@ -395,7 +450,9 @@ class StudentAttendanceViewSet(viewsets.ModelViewSet):
             "destroy",
             "bulk_create",
         ]:
-            return [IsAdministrator() | IsTeacher()]
+            # IMPORTANT FIX: Changed to allow any of these permissions
+            permission_classes = [IsAdministrator | IsTeacher]
+            return [permission() for permission in permission_classes]
         return [IsAuthenticated()]
 
     def get_queryset(self):

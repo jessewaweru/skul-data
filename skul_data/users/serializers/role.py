@@ -7,7 +7,7 @@ from skul_data.schools.models.school import School
 class PermissionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Permission
-        fields = ["id", "codename", "name"]
+        fields = ["id", "code", "name"]
 
 
 class RoleSerializer(serializers.ModelSerializer):

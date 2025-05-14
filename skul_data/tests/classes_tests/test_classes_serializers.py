@@ -22,9 +22,7 @@ from skul_data.schools.models.schoolclass import (
 )
 from skul_data.schools.models.schoolstream import SchoolStream
 from skul_data.users.models.base_user import User
-from skul_data.users.models.teacher import Teacher
-from skul_data.students.models.student import Student, Subject
-from skul_data.schools.models.school import School
+from skul_data.students.models.student import Subject
 from django.core.files.uploadedfile import SimpleUploadedFile
 import os
 from skul_data.tests.classes_tests.test_helpers import (

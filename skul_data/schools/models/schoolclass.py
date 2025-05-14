@@ -15,7 +15,6 @@ class SchoolClass(models.Model):
         ("Grade 4", "Grade 4"),
         ("Grade 5", "Grade 5"),
         ("Grade 6", "Grade 6"),
-        ("Grade 6", "Grade 6"),
         ("Grade 7", "Grade 7"),
         ("Grade 8", "Grade 8"),
         ("Grade 9", "Grade 9"),
@@ -120,7 +119,7 @@ class SchoolClass(models.Model):
             .exists()
         ):
             raise ValidationError(
-                "A class with this name already exists for this school and academic year."
+                "A class with this name already exists for this particular school and academic year."
             )
 
     def save(self, *args, **kwargs):
