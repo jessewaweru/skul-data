@@ -104,6 +104,11 @@ class HasRolePermission(BasePermission):
         if user.is_staff or user.user_type == User.SCHOOL_ADMIN:
             return True
 
+        # Allow teachers to view their own profile
+        if request.method == "GET" and view.action == "retrieve":
+            if request.user.user_type == User.TEACHER:
+                return True
+
         # Primary school admin check
         if (
             hasattr(user, "school_admin_profile")
@@ -132,8 +137,44 @@ class HasRolePermission(BasePermission):
         # Check if the required permission is in the role's permissions
         return role.permissions.filter(code=required_permission).exists()
 
+    # def has_object_permission(self, request, view, obj):
+    #     # For object-level permissions
+    #     # Staff and school admins always have permission
+    #     if request.user.is_staff or request.user.user_type == User.SCHOOL_ADMIN:
+    #         return True
+
+    #     # Primary school admin check
+    #     if (
+    #         hasattr(request.user, "school_admin_profile")
+    #         and request.user.school_admin_profile.is_primary
+    #     ):
+    #         return True
+
+    #     # Reuse the same logic but also check for owner if applicable
+    #     has_general_permission = self.has_permission(request, view)
+
+    #     # If general permission passes, also check ownership if relevant
+    #     if has_general_permission:
+    #         # If the object has a user field and it matches the requester
+    #         owner_field = getattr(view, "owner_field", "user")
+    #         if hasattr(obj, owner_field) and getattr(obj, owner_field) == request.user:
+    #             return True
+
+    #         # If the object has a created_by field and it matches the requester
+    #         if hasattr(obj, "created_by") and obj.created_by == request.user:
+    #             return True
+
+    #         # Specific school check if relevant
+    #         if (
+    #             hasattr(obj, "school")
+    #             and hasattr(request.user, "school")
+    #             and obj.school == request.user.school
+    #         ):
+    #             return True
+
+    #     return has_general_permission
+
     def has_object_permission(self, request, view, obj):
-        # For object-level permissions
         # Staff and school admins always have permission
         if request.user.is_staff or request.user.user_type == User.SCHOOL_ADMIN:
             return True
@@ -145,27 +186,17 @@ class HasRolePermission(BasePermission):
         ):
             return True
 
-        # Reuse the same logic but also check for owner if applicable
+        # Check if the user is the owner of the object
+        owner_field = getattr(view, "owner_field", "user")
+        if hasattr(obj, owner_field) and getattr(obj, owner_field) == request.user:
+            return True
+
+        # Check general permission (role-based)
         has_general_permission = self.has_permission(request, view)
 
-        # If general permission passes, also check ownership if relevant
-        if has_general_permission:
-            # If the object has a user field and it matches the requester
-            owner_field = getattr(view, "owner_field", "user")
-            if hasattr(obj, owner_field) and getattr(obj, owner_field) == request.user:
-                return True
-
-            # If the object has a created_by field and it matches the requester
-            if hasattr(obj, "created_by") and obj.created_by == request.user:
-                return True
-
-            # Specific school check if relevant
-            if (
-                hasattr(obj, "school")
-                and hasattr(request.user, "school")
-                and obj.school == request.user.school
-            ):
-                return True
+        # For teachers, they should only be able to view their own profile
+        if request.user.user_type == User.TEACHER:
+            return False  # If they got here, it's not their profile
 
         return has_general_permission
 

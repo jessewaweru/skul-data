@@ -62,9 +62,9 @@ class Teacher(models.Model):
     def email(self):
         return self.user.email
 
-    @property
-    def phone_number(self):
-        return self.user.phone_number
+    # @property
+    # def phone_number(self):
+    #     return self.user.phone_number
 
     @property
     def last_login(self):

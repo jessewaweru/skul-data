@@ -7,5 +7,6 @@ class UsersConfig(AppConfig):
     label = "users"
 
     def ready(self):
-        # Import models to ensure they're registered
-        from .models.base_user import User
+        # Import models first
+        from skul_data.users.models.base_user import User
+        from skul_data.users.signals import teacher

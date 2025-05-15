@@ -7,4 +7,4 @@ class ActionLogsConfig(AppConfig):
     label = "action_logs"
 
     def ready(self):
-        import skul_data.action_logs.signals
+        import skul_data.action_logs.signals.action_log

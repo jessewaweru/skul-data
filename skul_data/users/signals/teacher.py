@@ -22,30 +22,24 @@ def teacher_status_change(sender, instance, **kwargs):
                 instance.user.save()
 
 
-@receiver(post_save, sender=User)
-def create_teacher_profile(sender, instance, created, **kwargs):
-    if created and instance.user_type == "TEACHER":
-        Teacher.objects.create(user=instance)
-
-
 @receiver(post_save, sender=Teacher)
 def assign_teacher_permissions(sender, instance, created, **kwargs):
     if created or not instance.user.role:
         user = instance.user
-        user.user_type = User.TEACHER  # Ensure user_type is set
+        user.user_type = User.TEACHER
 
         # Get or create the permission
         perm, _ = Permission.objects.get_or_create(
             code="manage_attendance", defaults={"name": "Manage Attendance"}
         )
 
-        # Create or get the default teacher role for this school
+        # Create or get the default teacher role - remove description if it doesn't exist
         role, _ = Role.objects.get_or_create(
             name="Class Teacher",
             school=instance.school,
             defaults={
                 "role_type": "CUSTOM",
-                "description": "Default role with basic teacher permissions",
+                # Remove "description" if your Role model doesn't have it
             },
         )
 
