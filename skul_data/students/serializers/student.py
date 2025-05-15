@@ -374,3 +374,20 @@ class BulkAttendanceSerializer(serializers.Serializer):
                 )
 
         return value
+
+
+class SimpleStudentSerializer(serializers.ModelSerializer):
+    """This serializer is being used by the parent serializer to extract student details"""
+
+    class Meta:
+        model = Student
+        fields = [
+            "id",
+            "first_name",
+            "last_name",
+            "date_of_birth",
+            "admission_number",
+            "gender",
+            "status",
+        ]
+        read_only_fields = fields

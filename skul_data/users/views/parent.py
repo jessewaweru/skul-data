@@ -15,6 +15,7 @@ from skul_data.users.serializers.parent import (
     ParentCreateSerializer,
     ParentChildAssignmentSerializer,
     ParentNotificationPreferenceSerializer,
+    ParentStatusUpdateSerializer,
 )
 from rest_framework import filters
 from django_filters.rest_framework import DjangoFilterBackend
@@ -54,7 +55,7 @@ class ParentViewSet(viewsets.ModelViewSet):
         if self.action == "create":
             return ParentCreateSerializer
         elif self.action in ["change_status", "activate", "deactivate"]:
-            return ParentStatusChangeSerializer
+            return ParentStatusUpdateSerializer  # Use the new name
         elif self.action == "assign_children":
             return ParentChildAssignmentSerializer
         elif self.action == "update_notification_preferences":

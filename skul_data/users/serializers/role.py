@@ -20,7 +20,7 @@ class RoleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Role
-        fields = ["id", "name", "role_type", "permissions", "school"]
+        fields = ["id", "name", "role_type", "permissions", "school", "description"]
         read_only_fields = ["school"]
 
     def create(self, validated_data):

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from skul_data.users.models.parent import Parent, ParentNotification
+from skul_data.users.models.parent import Parent, ParentNotification, ParentStatusChange
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import make_password
 from skul_data.students.models.student import Student
@@ -47,11 +47,20 @@ class ParentSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_at", "updated_at"]
 
-    def get_children_details(self, obj):
-        # Import inside method to avoid circular dependency
-        from skul_data.students.serializers.student import StudentSerializer
+    # def get_children_details(self, obj):
+    #     # Import inside method to avoid circular dependency
+    #     from skul_data.students.serializers.student import StudentSerializer
 
-        return StudentSerializer(obj.children, many=True).data
+    #     return StudentSerializer(obj.children, many=True).data
+
+    def get_children_details(self, obj):
+        from skul_data.students.serializers.student import SimpleStudentSerializer
+
+        return SimpleStudentSerializer(
+            obj.children.all(),
+            many=True,
+            context=self.context,  # Pass context if needed for request or other data
+        ).data
 
     def validate_school(self, value):
         """Ensure the school matches the requesting user's school"""
@@ -69,19 +78,25 @@ class ParentCreateSerializer(serializers.ModelSerializer):
     school = serializers.PrimaryKeyRelatedField(
         queryset=School.objects.all(), write_only=True
     )
+    # school_id = serializers.PrimaryKeyRelatedField(
+    #     queryset=School.objects.all(), source="school", write_only=True
+    # )
 
     class Meta:
         model = Parent
         fields = [
+            "id",
             "email",
             "first_name",
             "last_name",
             "password",
             "phone_number",
             "school",
+            # "school_id",
             "address",
             "occupation",
         ]
+        read_only_fields = ["id"]
 
     def create(self, validated_data):
         # Extract email before popping it to use for username
@@ -106,6 +121,10 @@ class ParentCreateSerializer(serializers.ModelSerializer):
         # Then create the Parent profile
         parent = Parent.objects.create(user=user, **validated_data)
         return parent
+
+    def to_representation(self, instance):
+        # Override to return full representation after creation
+        return ParentSerializer(instance, context=self.context).data
 
 
 class ParentChildAssignmentSerializer(serializers.Serializer):
@@ -142,6 +161,21 @@ class ParentNotificationSerializer(serializers.ModelSerializer):
         return None
 
 
-class ParentStatusChangeSerializer(serializers.Serializer):
+class ParentStatusChangeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ParentStatusChange
+        fields = [
+            "id",
+            "parent",
+            "changed_by",
+            "from_status",
+            "to_status",
+            "reason",
+            "changed_at",
+        ]
+        read_only_fields = ["changed_at"]
+
+
+class ParentStatusUpdateSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=Parent.STATUS_CHOICES)
     reason = serializers.CharField(required=False, allow_blank=True)

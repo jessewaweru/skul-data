@@ -104,6 +104,11 @@ class HasRolePermission(BasePermission):
         if user.is_staff or user.user_type == User.SCHOOL_ADMIN:
             return True
 
+        # Allow parents to view their own profile
+        if request.method == "GET" and view.action == "retrieve":
+            if user.user_type == User.PARENT:
+                return True
+
         # Allow teachers to view their own profile
         if request.method == "GET" and view.action == "retrieve":
             if request.user.user_type == User.TEACHER:
@@ -190,6 +195,10 @@ class HasRolePermission(BasePermission):
         owner_field = getattr(view, "owner_field", "user")
         if hasattr(obj, owner_field) and getattr(obj, owner_field) == request.user:
             return True
+
+        # For parents trying to view their own profile
+        if request.user.user_type == User.PARENT and view.action == "retrieve":
+            return obj.user == request.user
 
         # Check general permission (role-based)
         has_general_permission = self.has_permission(request, view)

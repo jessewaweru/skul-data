@@ -24,6 +24,7 @@ class Role(models.Model):
     school = models.ForeignKey(
         "schools.School", on_delete=models.CASCADE, related_name="roles"
     )
+    description = models.TextField(blank=True, null=True)
 
     class Meta:
         unique_together = ("name", "school")
