@@ -2,6 +2,7 @@ from pathlib import Path
 from decouple import config
 from datetime import timedelta
 from celery.schedules import crontab
+import sys
 
 
 AUTH_USER_MODEL = "users.User"
@@ -205,23 +206,26 @@ CELERY_RESULT_EXPIRES = 7 * 24 * 60 * 60  # 7 days expiration for results
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 CELERY_BEAT_SCHEDULE = {
     "process-pending-report-requests": {
-        "task": "reports.tasks.process_pending_report_requests",
+        "task": "skul_data.reports.utils.tasks.process_pending_report_requests",
         "schedule": 300.0,  # Every 5 minutes
         "options": {
-            "expires": 60.0,  # Cancel if not run within 1 minute
+            "expires": 60.0,
         },
     },
     "generate-term-end-reports": {
-        "task": "reports.tasks.generate_term_end_reports",
-        "schedule": {  # First day of every month at 3am
-            "month": "*",
-            "day": "1",
-            "hour": "3",
-            "minute": "0",
-        },
+        "task": "skul_data.reports.utils.tasks.generate_term_end_reports",
+        "schedule": crontab(
+            day_of_month=1, hour=3, minute=0
+        ),  # Use crontab instead of dict
     },
     "cleanup-old-reports": {
-        "task": "reports.tasks.cleanup_old_reports",
+        "task": "skul_data.reports.utils.tasks.cleanup_old_reports",
         "schedule": crontab(hour=4, minute=30),  # Daily at 4:30am
     },
 }
+
+# Only enable eager mode during tests
+if "test" in sys.argv:
+    CELERY_TASK_ALWAYS_EAGER = True
+    CELERY_TASK_EAGER_PROPAGATES = True
+    print("\nRunning in TEST mode - Celery tasks will execute synchronously\n")

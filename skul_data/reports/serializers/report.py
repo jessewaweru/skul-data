@@ -14,6 +14,8 @@ from skul_data.reports.models.report import (
     TermReportRequest,
     GeneratedReportAccess,
 )
+from skul_data.students.models.student import Student
+from skul_data.users.models.base_user import User
 
 
 class ReportTemplateSerializer(serializers.ModelSerializer):
@@ -27,7 +29,9 @@ class ReportTemplateSerializer(serializers.ModelSerializer):
 
 
 class GeneratedReportSerializer(serializers.ModelSerializer):
-    report_type = ReportTemplateSerializer(read_only=True)
+    report_type = serializers.PrimaryKeyRelatedField(
+        queryset=ReportTemplate.objects.all(), required=True
+    )
     school = SchoolSerializer(read_only=True)
     generated_by = BaseUserSerializer(read_only=True)
     approved_by = BaseUserSerializer(read_only=True)
@@ -39,6 +43,14 @@ class GeneratedReportSerializer(serializers.ModelSerializer):
         model = GeneratedReport
         fields = "__all__"
         read_only_fields = ("generated_at",)
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        # Convert report_type ID to full object in the response
+        representation["report_type"] = ReportTemplateSerializer(
+            instance.report_type
+        ).data
+        return representation
 
 
 class ReportAccessLogSerializer(serializers.ModelSerializer):
@@ -94,11 +106,53 @@ class AcademicReportConfigSerializer(serializers.ModelSerializer):
 
 
 class TermReportRequestSerializer(serializers.ModelSerializer):
-    student = StudentSerializer(read_only=True)
+    # Keep student as PrimaryKeyRelatedField for writing, but override to_representation for reading
+    student = serializers.PrimaryKeyRelatedField(queryset=Student.objects.all())
     parent = BaseUserSerializer(read_only=True)
     generated_report = GeneratedReportSerializer(read_only=True)
 
     class Meta:
         model = TermReportRequest
         fields = "__all__"
-        read_only_fields = ("requested_at", "completed_at", "status")
+        read_only_fields = ("requested_at", "completed_at", "status", "parent")
+
+    def to_representation(self, instance):
+        """
+        Convert the instance to a representation for reading.
+        This allows us to return nested data when reading but accept IDs when writing.
+        """
+        ret = super().to_representation(instance)
+        # Convert student ID to nested representation for reading
+        if instance.student:
+            ret["student"] = StudentSerializer(instance.student).data
+        return ret
+
+    def validate(self, data):
+        request = self.context.get("request")
+
+        if request and request.user.is_authenticated:
+            user = request.user
+
+            if user.user_type == User.PARENT:
+                try:
+                    # data["student"] is now a Student instance (thanks to PrimaryKeyRelatedField)
+                    student = data.get("student")
+                    parent_profile = user.parent_profile
+                except AttributeError:
+                    raise serializers.ValidationError(
+                        "Invalid student or parent profile"
+                    )
+
+                if not student:
+                    raise serializers.ValidationError("Student is required")
+
+                # Check relationships
+                is_direct_parent = student.parent == parent_profile
+                is_guardian = student.guardians.filter(id=parent_profile.id).exists()
+
+                if not (is_direct_parent or is_guardian):
+                    raise serializers.ValidationError(
+                        "You can only request reports for your own children"
+                    )
+
+        return data

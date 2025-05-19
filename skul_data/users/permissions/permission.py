@@ -30,14 +30,31 @@ class IsAdministrator(BasePermission):
         )
 
 
+# class IsTeacher(BasePermission):
+#     def has_permission(self, request, view):
+#         return request.user.is_authenticated and request.user.user_type == "teacher"
+
+
 class IsTeacher(BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.user_type == "teacher"
+        return request.user.is_authenticated and request.user.user_type == User.TEACHER
+
+
+# class IsAdminOrTeacher(BasePermission):
+#     def has_permission(self, request, view):
+#         return IsAdministrator().has_permission(
+#             request, view
+#         ) or IsTeacher().has_permission(request, view)
+
+
+# class IsParent(BasePermission):
+#     def has_permission(self, request, view):
+#         return request.user.is_authenticated and request.user.user_type == "parent"
 
 
 class IsParent(BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.user_type == "parent"
+        return request.user.is_authenticated and request.user.user_type == User.PARENT
 
 
 class CanCreateEvent(BasePermission):

@@ -23,13 +23,20 @@ class ReportTemplate(models.Model):
         ("FINANCE", "Finance"),
         ("CUSTOM", "Custom"),
     ]
-
+    REPORT_FORMATS = [
+        ("PDF", "PDF"),
+        ("EXCEL", "Excel"),
+        ("HTML", "HTML"),
+    ]
     name = models.CharField(max_length=255)
     template_type = models.CharField(max_length=20, choices=TEMPLATE_TYPES)
     description = models.TextField(blank=True, null=True)
     content = JSONField(help_text="JSON structure defining the report template")
     is_system = models.BooleanField(default=False, help_text="System-wide template")
     school = models.ForeignKey(School, on_delete=models.CASCADE, null=True, blank=True)
+    preferred_format = models.CharField(
+        max_length=10, choices=REPORT_FORMATS, default="PDF"
+    )
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

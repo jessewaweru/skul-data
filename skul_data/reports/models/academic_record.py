@@ -1,5 +1,6 @@
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
+from decimal import Decimal
 
 
 class AcademicRecord(models.Model):
@@ -36,7 +37,7 @@ class AcademicRecord(models.Model):
     score = models.DecimalField(
         max_digits=5,
         decimal_places=2,
-        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        validators=[MinValueValidator(Decimal("0")), MaxValueValidator(Decimal("100"))],
     )
     grade = models.CharField(max_length=1, choices=GRADE_CHOICES)
     subject_comments = models.TextField(
@@ -60,10 +61,31 @@ class AcademicRecord(models.Model):
         return f"{self.student} - {self.subject} ({self.term} {self.school_year})"
 
     def save(self, *args, **kwargs):
-        # Auto-calculate grade if not set
-        if not self.grade:
+        # Calculate grade when the record is new or the score has changed
+        if not self.pk or (
+            self.pk
+            and hasattr(self, "_loaded_score")
+            and self.score != self._loaded_score
+        ):
             self.grade = self.calculate_grade()
-        super().save(*args, **kwargs)
+
+        # Save the record
+        result = super().save(*args, **kwargs)
+
+        # Store the current score to compare on next save
+        self._loaded_score = self.score
+
+        return result
+
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        # This method is called when the model is loaded from the database
+        instance = super().from_db(db, field_names, values)
+
+        # Store the original score value for comparison in save()
+        instance._loaded_score = instance.score
+
+        return instance
 
     def calculate_grade(self):
         """Calculate grade based on score"""
@@ -75,7 +97,7 @@ class AcademicRecord(models.Model):
             return "C"
         elif self.score >= 50:
             return "D"
-        elif self.score >= 40:
+        elif self.score >= 30:
             return "E"
         else:
             return "F"

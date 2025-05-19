@@ -1,3 +1,4 @@
+from django.utils import timezone
 from rest_framework import viewsets, permissions, status, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -18,7 +19,10 @@ from skul_data.reports.serializers.report import (
     ReportAccessLogSerializer,
     ReportNotificationSerializer,
 )
-from skul_data.users.permissions.permission import IsAdministrator, IsTeacher
+from skul_data.users.permissions.permission import (
+    IsAdministrator,
+    IsParent,
+)
 from django.db import models
 from skul_data.reports.models.report import GeneratedReport
 from skul_data.reports.serializers.report import (
@@ -28,6 +32,8 @@ from skul_data.reports.serializers.report import (
     GeneratedReportAccessSerializer,
 )
 from skul_data.users.models.base_user import User
+from rest_framework.permissions import OR
+from skul_data.schools.models.schoolclass import SchoolClass
 
 
 class ReportTemplateViewSet(viewsets.ModelViewSet):
@@ -118,6 +124,14 @@ class GeneratedReportViewSet(viewsets.ModelViewSet):
             ).distinct()
 
         return queryset
+
+    def perform_create(self, serializer):
+        # Add the school and generated_by automatically
+        user = self.request.user
+        school = getattr(user, "school", None)
+        if not school:
+            raise serializers.ValidationError("User must be associated with a school")
+        serializer.save(school=school, generated_by=user)
 
     @action(detail=True, methods=["post"])
     # Custom endpoint to be used for approving reports
@@ -217,8 +231,13 @@ class TermReportRequestViewSet(viewsets.ModelViewSet):
     filterset_fields = ["student", "parent", "term", "school_year", "status"]
 
     def get_permissions(self):
-        if self.action in ["create"]:
+        if self.action == "create":
+            # Allow parents to create requests
+            return [IsParent()]
+        elif self.action == "list":
+            # Allow parents, admins, and teachers to list (with filtering in get_queryset)
             return [permissions.IsAuthenticated()]
+        # For other actions like update/delete, require admin
         return [IsAdministrator()]
 
     def get_queryset(self):
@@ -227,8 +246,13 @@ class TermReportRequestViewSet(viewsets.ModelViewSet):
             return self.queryset
 
         # Parents can only see their own requests
-        if user.user_type == "parent":
+        if user.user_type == User.PARENT:
             return self.queryset.filter(parent=user)
+
+        # Teachers can see requests for their students
+        if user.user_type == User.TEACHER:
+            teacher = user.teacher_profile
+            return self.queryset.filter(student__school_class__teacher_assigned=teacher)
 
         school = getattr(user, "school", None)
         if school:
@@ -237,15 +261,26 @@ class TermReportRequestViewSet(viewsets.ModelViewSet):
         return TermReportRequest.objects.none()
 
     def perform_create(self, serializer):
-        parent = self.request.user
-        if parent.user_type != "parent":
+        user = self.request.user
+        if user.user_type != User.PARENT:
             raise PermissionDenied("Only parents can request student reports")
 
+        # Get the parent profile associated with the user
+        try:
+            parent = user.parent_profile
+        except AttributeError:
+            raise PermissionDenied("Parent profile not found")
+
         student = serializer.validated_data["student"]
-        if not student.guardians.filter(id=parent.id).exists():
+
+        # Check both types of relationships
+        is_direct_parent = student.parent == parent
+        is_guardian = student.guardians.filter(id=parent.id).exists()
+
+        if not (is_direct_parent or is_guardian):
             raise PermissionDenied("You can only request reports for your own children")
 
-        serializer.save(parent=parent, status="PENDING")
+        serializer.save(parent=user, status="PENDING")
         # Trigger async report generation
         self._generate_report_async(serializer.instance)
 
@@ -257,7 +292,13 @@ class TermReportRequestViewSet(viewsets.ModelViewSet):
 
 
 class AcademicReportViewSet(viewsets.ViewSet):
-    permission_classes = [IsAdministrator | IsTeacher]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action == "generate_term_reports":
+            # Use both permissions
+            return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated()]
 
     @action(detail=False, methods=["post"])
     def generate_term_reports(self, request):
@@ -272,18 +313,23 @@ class AcademicReportViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Verify the requesting teacher has access to this class
         if request.user.user_type == "teacher":
             teacher = request.user.teacher_profile
-            if not teacher.assigned_class or teacher.assigned_class.id != class_id:
+            # Check both M2M and class_teacher relationships
+            if not (
+                teacher.assigned_classes.filter(id=class_id).exists()
+                or SchoolClass.objects.filter(
+                    id=class_id, class_teacher=teacher
+                ).exists()
+            ):
                 raise PermissionDenied(
                     "You can only generate reports for your assigned class"
                 )
 
         # In a real implementation, this would call a Celery task
-        from skul_data.reports.utils.report_generator import generate_class_term_reports
+        from skul_data.reports.utils.tasks import generate_class_term_reports_task
 
-        task_id = generate_class_term_reports.delay(
+        task_id = generate_class_term_reports_task.delay(
             class_id=class_id,
             term=term,
             school_year=school_year,

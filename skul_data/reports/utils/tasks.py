@@ -1,5 +1,5 @@
 # Run Celery Worker (for report tasks):
-# celery -A skul_data.skul_data_main worker -l info -Q reports,celery -P gevent
+# celery -A skul_data.skul_data_main worker -l info -Q reports,celery
 # Run Celery Beat (for scheduled tasks):
 # celery -A skul_data.skul_data_main beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
 
@@ -41,18 +41,49 @@ logger = get_task_logger(__name__)
 
 @shared_task(bind=True)
 def generate_student_term_report_task(self, request_id):
+    """Generate a student term report from a request"""
     try:
         request = TermReportRequest.objects.get(id=request_id)
+
+        # Call the actual report generation function
         generate_student_term_report(request)
+
+        # Update request status on success
+        request.status = "COMPLETED"
+        request.save()
+
+        return f"Successfully generated report for request {request_id}"
+
+    except TermReportRequest.DoesNotExist:
+        logger.error(f"TermReportRequest with id {request_id} does not exist")
+        raise
     except Exception as e:
         logger.error(f"Failed to generate report for request {request_id}: {str(e)}")
+
+        # Update request status on failure
+        try:
+            request = TermReportRequest.objects.get(id=request_id)
+            request.status = "FAILED"
+            request.save()
+        except TermReportRequest.DoesNotExist:
+            pass
+
+        # Retry the task
         raise self.retry(exc=e, countdown=60, max_retries=3)
 
 
 @shared_task
 def generate_class_term_reports_task(class_id, term, school_year, generated_by_id):
+    """Generate term reports for all students in a class"""
     try:
-        generate_class_term_reports(class_id, term, school_year, generated_by_id)
+        # Call the actual report generation function with named arguments
+        result = generate_class_term_reports(
+            class_id=class_id,
+            term=term,
+            school_year=school_year,
+            generated_by_id=generated_by_id,
+        )
+        return result
     except Exception as e:
         logger.error(f"Failed to generate class reports: {str(e)}")
         raise
@@ -62,49 +93,77 @@ def generate_class_term_reports_task(class_id, term, school_year, generated_by_i
 def process_pending_report_requests():
     """Process all pending report requests"""
     requests = TermReportRequest.objects.filter(status="PENDING")
+    count = 0
+
     for request in requests:
+        # Use .delay() to call the task asynchronously
         generate_student_term_report_task.delay(request.id)
-    return f"Processed {len(requests)} pending requests"
+        count += 1
+
+    return f"Processed {count} pending requests"
 
 
 @shared_task
 def generate_term_end_reports():
     """Generate term-end reports for all schools with auto-generation enabled"""
+    from skul_data.schools.utils.school import get_current_term
+
     schools = School.objects.filter(
         academicreportconfig__auto_generate_term_reports=True
     )
 
+    count = 0
     for school in schools:
-        config = school.academicreportconfig
-        term = get_current_term(school.id)
-        school_year = SchoolEvent.get_current_school_year()
+        try:
+            config = school.academicreportconfig
+            # Get current term for the school
+            term = (
+                get_current_term(school.id)
+                if hasattr(get_current_term, "__call__")
+                else None
+            )
+            # Get current school year
+            school_year = SchoolEvent.get_current_school_year()
 
-        generate_school_term_reports_task.delay(
-            school.id, term, school_year, days_after=config.days_after_term_to_generate
-        )
+            # Schedule the school report generation task
+            generate_school_term_reports_task.delay(
+                school.id,
+                term,
+                school_year,
+                days_after=config.days_after_term_to_generate,
+            )
+            count += 1
+        except Exception as e:
+            logger.error(f"Failed to initiate reports for school {school.id}: {str(e)}")
 
-    return f"Initiated term-end reports for {len(schools)} schools"
+    return f"Initiated term-end reports for {count} schools"
 
 
 @shared_task
 def generate_school_term_reports_task(school_id, term, school_year, days_after=3):
     """Generate reports for all classes in a school after term ends"""
-    from schools.models import SchoolClass
+    from skul_data.schools.models.schoolclass import SchoolClass
 
     # Calculate generation date
     generation_date = timezone.now() + timedelta(days=days_after)
 
+    # Get all classes for the school
     classes = SchoolClass.objects.filter(school_id=school_id)
+    scheduled_count = 0
+
     for school_class in classes:
-        if school_class.teacher_assigned:
+        # Check if class has an assigned teacher
+        if school_class.class_teacher:
+            # Schedule the class report generation task
             generate_class_term_reports_task.apply_async(
                 args=[
                     school_class.id,
                     term,
                     school_year,
-                    school_class.teacher_assigned.user.id,
+                    school_class.class_teacher.user.id,
                 ],
                 eta=generation_date,
             )
+            scheduled_count += 1
 
-    return f"Scheduled term reports for {len(classes)} classes in school {school_id}"
+    return f"Scheduled term reports for {scheduled_count} classes in school {school_id}"

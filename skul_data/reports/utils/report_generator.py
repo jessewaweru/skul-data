@@ -209,10 +209,17 @@ def generate_report_for_student(
 
         # Prepare report data
         report_data = {
+            # "student": {
+            #     "full_name": student.full_name,
+            #     "admission_number": student.admission_number,
+            #     "class_name": student.student_class.name,
+            # },
             "student": {
                 "full_name": student.full_name,
-                "admission_number": student.admission_number,
-                "class_name": student.school_class.name,
+                "admission_number": student.admission_number or "N/A",
+                "class_name": (
+                    student.student_class.name if student.student_class else "N/A"
+                ),
             },
             "term": term,
             "school_year": school_year,
@@ -222,7 +229,10 @@ def generate_report_for_student(
                     "score": float(record.score),
                     "grade": record.grade,
                     "comments": record.subject_comments,
-                    "teacher": record.teacher.user.full_name if record.teacher else "",
+                    # "teacher": record.teacher.user.full_name if record.teacher else "",
+                    "teacher": (
+                        record.teacher.user.get_full_name() if record.teacher else ""
+                    ),
                 }
                 for record in academic_records
             ],
@@ -230,7 +240,8 @@ def generate_report_for_student(
                 {
                     "type": comment.get_comment_type_display(),
                     "content": comment.content,
-                    "teacher": comment.teacher.user.full_name,
+                    # "teacher": comment.teacher.user.full_name,
+                    "teacher": comment.teacher.user.get_full_name(),
                 }
                 for comment in comments
             ],
@@ -271,14 +282,16 @@ def generate_student_term_report(request_instance):
         student = request_instance.student
         term = request_instance.term
         school_year = request_instance.school_year
-        teacher_user = request_instance.requested_by
+        teacher_user = request_instance.requested_at
         school = student.school
 
         # Get template
         template = ReportTemplate.objects.get(template_type="ACADEMIC", school=school)
 
         # Get class average
-        class_average = calculate_class_average(student.school_class, term, school_year)
+        class_average = calculate_class_average(
+            student.student_class, term, school_year
+        )
 
         # Generate the report
         generated_report = generate_report_for_student(
@@ -303,7 +316,7 @@ def generate_student_term_report(request_instance):
         request_instance.save()
 
         # Notify the parent
-        send_report_notification(student.parent, generated_report)
+        send_report_notification(student.parent.user, generated_report)
 
     except Exception as e:
         request_instance.status = "FAILED"
@@ -326,7 +339,8 @@ def generate_class_term_reports(class_id, term, school_year, generated_by_id):
             .teacher_profile
         )
 
-        if teacher.assigned_class != school_class:
+        # if teacher.assigned_classes != school_class:
+        if school_class not in teacher.assigned_classes.all():
             raise PermissionDenied(
                 "You can only generate reports for your assigned class"
             )
@@ -369,7 +383,7 @@ def generate_class_term_reports(class_id, term, school_year, generated_by_id):
             for parent in student.guardians.all():
                 GeneratedReportAccess.objects.create(
                     report=report,
-                    user=parent,
+                    user=parent.user,
                     expires_at=timezone.now()
                     + timedelta(
                         days=school.academicreportconfig.parent_access_expiry_days
@@ -399,7 +413,7 @@ def calculate_class_average(school_class, term, school_year):
     from django.db.models import Avg
 
     average = AcademicRecord.objects.filter(
-        student__school_class=school_class, term=term, school_year=school_year
+        student__student_class=school_class, term=term, school_year=school_year
     ).aggregate(average=Avg("score"))["average"]
 
     return round(average, 2) if average else None

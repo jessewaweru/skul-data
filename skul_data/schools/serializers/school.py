@@ -19,7 +19,7 @@ class SchoolSerializer(serializers.ModelSerializer):
             "code",
             "type",
             "motto",
-            "address",
+            "location",
             "city",
             "country",
             "phone",
