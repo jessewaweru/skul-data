@@ -11,9 +11,12 @@ from django.db.models import (
     ExpressionWrapper,
     DurationField,
     Func,
+    FloatField,
 )
+from django.db.models import Value
+from django.db.models.functions import TruncDate
 from django.utils import timezone
-from datetime import timedelta
+from datetime import timedelta, datetime
 from skul_data.reports.models.academic_record import AcademicRecord
 from skul_data.schools.models.schoolclass import ClassAttendance
 from skul_data.schools.models.schoolclass import SchoolClass
@@ -26,15 +29,27 @@ from skul_data.users.models.teacher import Teacher
 from skul_data.documents.models.document import Document
 from skul_data.students.models.student import Student, StudentAttendance
 from skul_data.schools.utils.school import get_current_term
+from skul_data.action_logs.models.action_log import ActionLog, ActionCategory
+from django.contrib.contenttypes.models import ContentType
+from skul_data.notifications.models.notification import Notification
+from skul_data.users.models.school_admin import SchoolAdmin
 
 
-# Helper methods for each analytics metric
 def get_most_active_teacher(school):
     """Get most active teacher this month"""
     last_month = timezone.now() - timedelta(days=30)
     return (
         Teacher.objects.filter(school=school, user__last_login__gte=last_month)
-        .annotate(login_count=Count("user__login_history"))
+        .annotate(
+            login_count=Count(
+                "user__actions",
+                filter=Q(
+                    user__actions__category=ActionCategory.LOGIN,
+                    user__actions__timestamp__gte=last_month,
+                ),
+                distinct=True,
+            )
+        )
         .order_by("-login_count")
         .values("user__first_name", "user__last_name", "login_count")
         .first()
@@ -42,36 +57,60 @@ def get_most_active_teacher(school):
 
 
 def get_reports_generated_count(school):
-    """Get number of reports generated this term"""
-    current_term = get_current_term()
+    current_term = get_current_term(school_id=school.id)
+    if not current_term:
+        return 0
+
     return GeneratedReport.objects.filter(
         school=school,
-        generated_at__gte=current_term["start_date"],
-        generated_at__lte=current_term["end_date"],
+        generated_at__range=(current_term["start_date"], current_term["end_date"]),
     ).count()
 
 
 def get_student_attendance_rate(school):
-    """Get school-wide student attendance rate"""
-    total_attendance = ClassAttendance.objects.filter(
+    """
+    Calculate the average daily attendance rate using historical student counts
+    Returns: float (percentage between 0-100)
+    """
+    attendance_records = ClassAttendance.objects.filter(
         school_class__school=school
-    ).aggregate(
-        total_present=Sum("present_students__count"),
-        total_possible=Sum("school_class__students__count"),
-    )
+    ).prefetch_related("present_students")
 
-    if total_attendance["total_possible"] > 0:
-        return (
-            total_attendance["total_present"] / total_attendance["total_possible"]
-        ) * 100
-    return 0
+    if not attendance_records.exists():
+        return 0.0
+
+    daily_rates = []
+
+    for record in attendance_records:
+        if record.total_students == 0:
+            continue
+
+        present_count = record.present_students.count()
+        daily_rate = (present_count / record.total_students) * 100
+        daily_rates.append(daily_rate)
+
+    if not daily_rates:
+        return 0.0
+
+    return round(sum(daily_rates) / len(daily_rates), 1)
 
 
 def get_most_downloaded_document(school):
-    """Get most downloaded document type"""
+    """Get most downloaded document using ActionLog"""
+    # Get ContentType for Document model
+    document_content_type = ContentType.objects.get_for_model(Document)
+
     return (
         Document.objects.filter(school=school)
-        .annotate(download_count=Count("access_logs"))
+        .annotate(
+            download_count=Count(
+                "actions",
+                filter=Q(
+                    actions__category=ActionCategory.DOWNLOAD,
+                    actions__content_type=document_content_type,
+                ),
+            )
+        )
         .order_by("-download_count")
         .values("title", "category__name", "download_count")
         .first()
@@ -79,17 +118,16 @@ def get_most_downloaded_document(school):
 
 
 def get_top_performing_class(school):
-    """Get top performing class by average grade"""
-    return (
+    result = (
         AcademicRecord.objects.filter(student__school=school)
-        .values("student__school_class__name")
-        .annotate(average_score=Avg("score"))
+        .values("student__classes__name")
+        .annotate(average_score=Avg("score", output_field=FloatField()))
         .order_by("-average_score")
         .first()
     )
+    return result
 
 
-# ===== TEACHER ANALYTICS HELPERS =====
 def get_teacher_logins(school, filters):
     """Get teacher login trends (daily/weekly)"""
     date_filter = get_date_filter(filters)
@@ -99,13 +137,24 @@ def get_teacher_logins(school, filters):
             user__last_login__range=(date_filter["start"], date_filter["end"]),
         )
         .annotate(
-            login_count=Count("user__login_history"),
-            last_week_logins=Count(
-                "user__login_history",
+            login_count=Count(
+                "user__actions",
                 filter=Q(
-                    user__login_history__timestamp__gte=timezone.now()
-                    - timedelta(days=7)
+                    user__actions__category=ActionCategory.LOGIN,
+                    user__actions__timestamp__range=(
+                        date_filter["start"],
+                        date_filter["end"],
+                    ),
                 ),
+                distinct=True,
+            ),
+            last_week_logins=Count(
+                "user__actions",
+                filter=Q(
+                    user__actions__category=ActionCategory.LOGIN,
+                    user__actions__timestamp__gte=timezone.now() - timedelta(days=7),
+                ),
+                distinct=True,
             ),
         )
         .values(
@@ -205,7 +254,7 @@ def get_student_attendance(school, filters):
         .values(
             "student__first_name",
             "student__last_name",
-            "student__school_class__name",
+            "student__student_class__name",
         )
         .annotate(
             present_days=Count("id", filter=Q(status="PRESENT")),
@@ -216,7 +265,7 @@ def get_student_attendance(school, filters):
     return [
         {
             "student": f"{a['student__first_name']} {a['student__last_name']}",
-            "class": a["student__school_class__name"],
+            "class": a["student__student_class__name"],
             "attendance_rate": (
                 (a["present_days"] / a["total_days"]) * 100
                 if a["total_days"] > 0
@@ -228,7 +277,6 @@ def get_student_attendance(school, filters):
 
 
 def get_student_performance(school, filters):
-    """Get student performance trends"""
     date_filter = get_date_filter(filters)
     class_filter = get_class_filter(filters)
 
@@ -241,20 +289,25 @@ def get_student_performance(school, filters):
         .values(
             "student__first_name",
             "student__last_name",
-            "student__school_class__name",
+            "student__student_class__name",
         )
         .annotate(
             avg_score=Avg("score"),
-            improvement=Avg("score")
-            - Avg(
-                Case(
-                    When(
-                        student__academic_records__created_at__lt=date_filter["start"],
-                        then="student__academic_records__score",
-                    ),
-                    default=None,
-                    output_field=models.FloatField(),
-                )
+            improvement=ExpressionWrapper(
+                Avg("score")
+                - Avg(
+                    Case(
+                        When(
+                            student__academic_records__created_at__lt=date_filter[
+                                "start"
+                            ],
+                            then="student__academic_records__score",
+                        ),
+                        default=None,
+                        output_field=FloatField(),
+                    )
+                ),
+                output_field=FloatField(),
             ),
         )
         .order_by("-avg_score")
@@ -277,23 +330,36 @@ def get_student_dropouts(school, filters):
 
 
 def get_document_access(school, filters):
-    """Get document access frequency by students"""
+    """Get document access statistics"""
     date_filter = get_date_filter(filters)
+    document_content_type = ContentType.objects.get_for_model(Document)
+
     return (
-        Document.objects.filter(
-            school=school,
-            access_logs__timestamp__range=(
-                date_filter["start"],
-                date_filter["end"],
-            ),
-            related_students__isnull=False,
-        )
-        .values("title")
+        Document.objects.filter(school=school)
         .annotate(
-            access_count=Count("access_logs"),
-            student_count=Count("related_students", distinct=True),
+            view_count=Count(
+                "actions",
+                filter=Q(
+                    actions__category=ActionCategory.VIEW,
+                    actions__timestamp__range=(
+                        date_filter["start"],
+                        date_filter["end"],
+                    ),
+                ),
+            ),
+            download_count=Count(
+                "actions",
+                filter=Q(
+                    actions__category=ActionCategory.DOWNLOAD,
+                    actions__timestamp__range=(
+                        date_filter["start"],
+                        date_filter["end"],
+                    ),
+                ),
+            ),
         )
-        .order_by("-access_count")
+        .values("title", "view_count", "download_count")
+        .order_by("-view_count")
     )
 
 
@@ -316,9 +382,9 @@ def get_class_average_grades(school, filters):
             student__school=school,
             created_at__range=(date_filter["start"], date_filter["end"]),
         )
-        .values("student__school_class__name", "term")
+        .values("student__student_class__name", "term")
         .annotate(avg_score=Avg("score"))
-        .order_by("student__school_class__name", "term")
+        .order_by("student__student_class__name", "term")
     )
 
 
@@ -330,7 +396,7 @@ def get_top_classes(school, filters):
             student__school=school,
             created_at__range=(date_filter["start"], date_filter["end"]),
         )
-        .values("student__school_class__name")
+        .values("student__student_class__name")
         .annotate(avg_score=Avg("score"), top_student=Max("score"))
         .order_by("-avg_score")
     )
@@ -378,20 +444,17 @@ def get_teacher_ratios(school):
     )
 
 
-# ===== DOCUMENT ANALYTICS HELPERS =====
 def get_document_download_frequency(school, filters):
-    """Get document download frequency"""
     date_filter = get_date_filter(filters)
+
     return (
-        Document.objects.filter(
-            school=school,
-            access_logs__timestamp__range=(
-                date_filter["start"],
-                date_filter["end"],
-            ),
+        ActionLog.objects.filter(
+            document__school=school,  # Use the reverse relation
+            category=ActionCategory.DOWNLOAD,
+            timestamp__range=(date_filter["start"], date_filter["end"]),
         )
-        .values("title", "category__name")
-        .annotate(download_count=Count("access_logs"))
+        .values("document__title", "document__category__name")
+        .annotate(download_count=Count("id"))
         .order_by("-download_count")
     )
 
@@ -410,15 +473,17 @@ def get_document_access_by_role(school, filters):
     """Get document access by user role"""
     date_filter = get_date_filter(filters)
     return (
-        Document.objects.filter(
-            school=school,
-            access_logs__timestamp__range=(
-                date_filter["start"],
-                date_filter["end"],
-            ),
+        ActionLog.objects.filter(
+            content_type=ContentType.objects.get_for_model(Document),
+            object_id__in=Document.objects.filter(school=school).values("id"),
+            category__in=[
+                ActionCategory.VIEW,
+                ActionCategory.DOWNLOAD,
+            ],
+            timestamp__range=(date_filter["start"], date_filter["end"]),
         )
-        .values("access_logs__accessed_by__user_type")
-        .annotate(access_count=Count("access_logs"))
+        .values("user__user_type")
+        .annotate(access_count=Count("id"))
         .order_by("-access_count")
     )
 
@@ -473,7 +538,9 @@ def get_most_accessed_reports(school, filters):
 def get_missing_reports(school, filters):
     """Get teachers with missing reports"""
     date_filter = get_date_filter(filters)
-    current_term = get_current_term()
+    current_term = get_current_term(school_id=school.id)
+    if not current_term:
+        return []
 
     # Get all teachers expected to submit reports
     teachers = Teacher.objects.filter(school=school)
@@ -540,25 +607,47 @@ def get_parent_report_views(school, filters):
     )
 
 
-# ===== PARENT ANALYTICS HELPERS =====
 def get_most_engaged_parents(school, filters):
     """Get most engaged parents by activity"""
     date_filter = get_date_filter(filters)
+
     return (
         Parent.objects.filter(
             school=school,
             user__last_login__range=(date_filter["start"], date_filter["end"]),
         )
         .annotate(
-            activity_score=Count("user__login_history")
-            + Count("notifications", filter=Q(notifications__is_read=True))
-            + Count(
+            login_count=Count(
+                "user__actions",
+                filter=Q(
+                    user__actions__category=ActionCategory.LOGIN,
+                    user__actions__timestamp__range=(
+                        date_filter["start"],
+                        date_filter["end"],
+                    ),
+                ),
+            ),
+            notification_count=Count(
+                "notifications",
+                filter=Q(notifications__is_read=True),
+            ),
+            record_views=Count(
                 "children__academic_records",
                 filter=Q(children__academic_records__is_published=True),
-            )
+            ),
+            activity_score=(
+                F("login_count") + F("notification_count") + F("record_views")
+            ),
         )
         .order_by("-activity_score")
-        .values("user__first_name", "user__last_name", "activity_score")[:10]
+        .values(
+            "user__first_name",
+            "user__last_name",
+            "activity_score",
+            "login_count",
+            "notification_count",
+            "record_views",
+        )[:10]
     )
 
 
@@ -599,14 +688,13 @@ def get_parent_feedback(school, filters):
 
 
 def get_parent_login_trends(school, filters):
-    """Get parent login trends"""
     date_filter = get_date_filter(filters)
     return (
         Parent.objects.filter(
             school=school,
             user__last_login__range=(date_filter["start"], date_filter["end"]),
         )
-        .extra({"login_date": "date(user__last_login)"})
+        .annotate(login_date=TruncDate("user__last_login"))
         .values("login_date")
         .annotate(login_count=Count("id"))
         .order_by("login_date")
@@ -686,34 +774,45 @@ def get_unread_notifications(school):
     )
 
 
-# ===== SCHOOL-WIDE ANALYTICS HELPERS =====
 def get_active_users(school, filters):
     """Get count of active users by type"""
     date_filter = get_date_filter(filters)
-    return (
-        User.objects.filter(
+
+    return {
+        "teachers": Teacher.objects.filter(
             school=school,
-            last_login__range=(date_filter["start"], date_filter["end"]),
-        )
-        .values("user_type")
-        .annotate(count=Count("id"))
-        .order_by("-count")
-    )
+            user__last_login__range=(date_filter["start"], date_filter["end"]),
+        ).count(),
+        "parents": Parent.objects.filter(
+            school=school,
+            user__last_login__range=(date_filter["start"], date_filter["end"]),
+        ).count(),
+        "admins": SchoolAdmin.objects.filter(
+            school=school,
+            user__last_login__range=(date_filter["start"], date_filter["end"]),
+        ).count(),
+    }
 
 
 def get_engagement_rates(school, filters):
-    """Get engagement rates (logins over time)"""
     date_filter = get_date_filter(filters)
-    return (
-        User.objects.filter(
-            school=school,
-            last_login__range=(date_filter["start"], date_filter["end"]),
-        )
-        .extra({"login_week": "date_trunc('week', last_login)"})
-        .values("login_week", "user_type")
-        .annotate(login_count=Count("id"))
-        .order_by("login_week", "user_type")
-    )
+
+    # Get ContentType for relevant models
+    doc_content_type = ContentType.objects.get_for_model(Document)
+    report_content_type = ContentType.objects.get_for_model(GeneratedReport)
+
+    return {
+        "documents": ActionLog.objects.filter(
+            content_type=doc_content_type,
+            object_id__in=Document.objects.filter(school=school).values("id"),
+            timestamp__range=(date_filter["start"], date_filter["end"]),
+        ).count(),
+        "reports": ActionLog.objects.filter(
+            content_type=report_content_type,
+            object_id__in=GeneratedReport.objects.filter(school=school).values("id"),
+            timestamp__range=(date_filter["start"], date_filter["end"]),
+        ).count(),
+    }
 
 
 def get_report_generation_stats(school, filters):
@@ -768,36 +867,55 @@ def get_school_growth(school, filters):
 
 
 # ===== COMMON HELPER METHODS =====
+
+
 def get_date_filter(filters):
-    """Convert date filters to actual dates"""
+    """Convert date filters to actual dates with timezone awareness"""
+    now = timezone.now()
+
     if "date_range" in filters:
         if filters["date_range"] == "daily":
             return {
-                "start": timezone.now() - timedelta(days=1),
-                "end": timezone.now(),
+                "start": now - timedelta(days=1),
+                "end": now,
             }
         elif filters["date_range"] == "weekly":
             return {
-                "start": timezone.now() - timedelta(days=7),
-                "end": timezone.now(),
+                "start": now - timedelta(days=7),
+                "end": now,
             }
         elif filters["date_range"] == "monthly":
             return {
-                "start": timezone.now() - timedelta(days=30),
-                "end": timezone.now(),
+                "start": now - timedelta(days=30),
+                "end": now,
             }
         elif filters["date_range"] == "termly":
             term = get_current_term()
-            return {"start": term["start_date"], "end": term["end_date"]}
+            return {
+                "start": term["start_date"],
+                "end": term["end_date"],
+            }
+
+    # Handle string dates and convert to timezone-aware datetimes
+    start_date = filters.get("start_date")
+    end_date = filters.get("end_date")
 
     return {
-        "start": filters.get("start_date", timezone.now() - timedelta(days=30)),
-        "end": filters.get("end_date", timezone.now()),
+        "start": (
+            timezone.make_aware(datetime.strptime(start_date, "%Y-%m-%d"))
+            if start_date
+            else now - timedelta(days=30)
+        ),
+        "end": (
+            timezone.make_aware(datetime.strptime(end_date, "%Y-%m-%d"))
+            if end_date
+            else now
+        ),
     }
 
 
 def get_class_filter(filters):
     """Get class filter if specified"""
     if "class_id" in filters:
-        return {"student__school_class__id": filters["class_id"]}
+        return {"student__student_class__id": filters["class_id"]}
     return {}

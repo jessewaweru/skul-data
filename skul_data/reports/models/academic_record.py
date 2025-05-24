@@ -30,7 +30,7 @@ class AcademicRecord(models.Model):
         blank=True,
         related_name="taught_records",
     )
-    term = models.CharField(max_length=20)  # e.g., "Term 1", "Mid-Term"
+    term = models.CharField(max_length=40)  # e.g., "Term 1", "Mid-Term"
     school_year = models.CharField(
         max_length=20,
     )  # e.g., "2023-2024"

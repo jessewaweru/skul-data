@@ -31,7 +31,7 @@ class ActionLog(models.Model):
         max_length=20, choices=ActionCategory.choices, default=ActionCategory.OTHER
     )
     ip_address = models.GenericIPAddressField(null=True, blank=True)
-    user_agent = models.TextField(blank=True, null=True)
+    user_agent = models.CharField(max_length=500, blank=True, null=True)
 
     # Affected model/object (using generic foreign key)
     content_type = models.ForeignKey(

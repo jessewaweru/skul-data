@@ -11,3 +11,4 @@ class AnalyticsConfig(AppConfig):
     def ready(self):
         # This ensures tasks are imported when Django starts
         from skul_data.analytics.utils import tasks
+        from skul_data.analytics.signals import analytics

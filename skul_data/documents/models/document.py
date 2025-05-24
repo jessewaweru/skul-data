@@ -6,6 +6,7 @@ from skul_data.schools.models.schoolclass import SchoolClass
 from skul_data.users.models.base_user import User
 from django.core.exceptions import ValidationError
 from django.utils import timezone
+from django.contrib.contenttypes.fields import GenericRelation
 
 
 class DocumentCategory(models.Model):
@@ -84,6 +85,12 @@ class Document(models.Model):
         "students.Student",
         blank=True,
         help_text="Optional: Students this document is associated with",
+    )
+    actions = GenericRelation(
+        "action_logs.ActionLog",
+        content_type_field="content_type",
+        object_id_field="object_id",
+        related_query_name="document",
     )
 
     # Uploader information

@@ -6,6 +6,7 @@ from skul_data.analytics.models.analytics import (
 )
 from skul_data.schools.serializers.school import SchoolSerializer
 from skul_data.users.serializers.base_user import BaseUserSerializer
+from skul_data.schools.models.school import School
 
 
 class AnalyticsDashboardSerializer(serializers.ModelSerializer):
@@ -15,7 +16,14 @@ class AnalyticsDashboardSerializer(serializers.ModelSerializer):
     class Meta:
         model = AnalyticsDashboard
         fields = "__all__"
-        read_only_fields = ("created_at", "updated_at")
+        read_only_fields = ("created_by", "created_at", "updated_at")
+
+    def create(self, validated_data):
+        # Get school from request user if not provided
+        if "school" not in validated_data:
+            validated_data["school"] = self.context["request"].user.school
+        validated_data["created_by"] = self.context["request"].user
+        return super().create(validated_data)
 
 
 class CachedAnalyticsSerializer(serializers.ModelSerializer):

@@ -2,6 +2,7 @@ from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.core.exceptions import ValidationError
 from skul_data.schools.models.school import School
+from skul_data.schools.models.schoolstream import SchoolStream
 
 
 class SchoolClass(models.Model):
@@ -35,7 +36,7 @@ class SchoolClass(models.Model):
     name = models.CharField(max_length=100)
     grade_level = models.CharField(max_length=20, choices=GRADE_LEVEL_CHOICES)
     stream = models.ForeignKey(
-        "SchoolStream",
+        SchoolStream,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -200,10 +201,17 @@ class ClassAttendance(models.Model):
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    total_students = models.PositiveIntegerField(default=0)
 
     class Meta:
         unique_together = ("school_class", "date")
         ordering = ["-date"]
+
+    def save(self, *args, **kwargs):
+        """Automatically capture student count when creating new attendance"""
+        if not self.pk:  # Only on initial creation
+            self.total_students = self.school_class.students.count()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Attendance for {self.school_class} on {self.date}"

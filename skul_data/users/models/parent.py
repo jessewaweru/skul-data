@@ -116,9 +116,15 @@ class ParentNotification(models.Model):
         "students.Student", on_delete=models.SET_NULL, null=True, blank=True
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    read_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["-created_at"]
+
+    def mark_as_read(self):
+        self.is_read = True
+        self.read_at = timezone.now()
+        self.save()
 
     def __str__(self):
         return f"{self.get_notification_type_display()} for {self.parent}"

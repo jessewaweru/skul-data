@@ -39,6 +39,7 @@ from skul_data.analytics.utils.analytics_generator import (
     get_teacher_ratios,
     get_document_download_frequency,
     get_document_types_distribution,
+    get_document_access,
     get_document_access_by_role,
     get_uploads_by_user,
     get_reports_generated,
@@ -59,7 +60,7 @@ from skul_data.analytics.utils.analytics_generator import (
     get_report_generation_stats,
     get_school_growth,
     get_teacher_ratios,
-    get_document_access,
+    get_document_access_by_role,
     get_document_access_by_role,
     get_uploads_by_user,
     get_response_times,
@@ -71,8 +72,7 @@ class AnalyticsViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get_school(self):
-        """Helper to get the school for the current user"""
-        return self.request.user.school
+        return self.request.user.administered_school
 
     @action(detail=False, methods=["get"])
     def overview(self, request):
@@ -87,12 +87,24 @@ class AnalyticsViewSet(viewsets.ViewSet):
         if cached:
             return Response(cached.data)
 
-        # Calculate fresh data
+        # Convert Decimal values to float before caching
         data = {
-            "most_active_teacher": get_most_active_teacher(school),
-            "student_attendance_rate": get_student_attendance_rate(school),
-            "most_downloaded_document": get_most_downloaded_document(school),
-            "top_performing_class": get_top_performing_class(school),
+            "most_active_teacher": (
+                dict(get_most_active_teacher(school))
+                if get_most_active_teacher(school)
+                else None
+            ),
+            "student_attendance_rate": float(get_student_attendance_rate(school)),
+            "most_downloaded_document": (
+                dict(get_most_downloaded_document(school))
+                if get_most_downloaded_document(school)
+                else None
+            ),
+            "top_performing_class": (
+                dict(get_top_performing_class(school))
+                if get_top_performing_class(school)
+                else None
+            ),
             "reports_generated": get_reports_generated_count(school),
         }
 
@@ -258,10 +270,14 @@ class AnalyticsDashboardViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsAdministrator]
 
     def get_queryset(self):
-        return super().get_queryset().filter(school=self.request.user.school)
+        return (
+            super().get_queryset().filter(school=self.request.user.administered_school)
+        )
 
     def perform_create(self, serializer):
-        serializer.save(school=self.request.user.school, created_by=self.request.user)
+        serializer.save(
+            school=self.request.user.administered_school, created_by=self.request.user
+        )
 
 
 class AnalyticsAlertViewSet(viewsets.ModelViewSet):
@@ -272,7 +288,9 @@ class AnalyticsAlertViewSet(viewsets.ModelViewSet):
     filterset_fields = ["alert_type", "is_read", "school"]
 
     def get_queryset(self):
-        return super().get_queryset().filter(school=self.request.user.school)
+        return (
+            super().get_queryset().filter(school=self.request.user.administered_school)
+        )
 
     @action(detail=True, methods=["post"])
     def mark_read(self, request, pk=None):

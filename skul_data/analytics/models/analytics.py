@@ -48,9 +48,14 @@ class AnalyticsAlert(models.Model):
 
     ALERT_TYPES = [
         ("ATTENDANCE", "Attendance Alert"),
-        ("PERFORMANCE", "Performance Alert"),
+        (
+            "PERFORMANCE",
+            "Performance Alert",
+        ),  # For aggregated alerts (3+ failures)- currently used with celery tasks
+        ("PERFORMANCE_SINGLE", "Single Performance Alert"),
         ("REPORT", "Report Alert"),
         ("DOCUMENT", "Document Alert"),
+        ("ABSENCE_NO_NOTES", "Absence Without Notes Alert"),
         ("SYSTEM", "System Alert"),
     ]
 
