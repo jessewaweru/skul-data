@@ -2,6 +2,7 @@ from django.db import models
 from skul_data.users.models import User
 from django.contrib.contenttypes.fields import GenericForeignKey
 from django.contrib.contenttypes.models import ContentType
+from django.utils import timezone
 
 
 class ActionCategory(models.TextChoices):
@@ -42,7 +43,8 @@ class ActionLog(models.Model):
 
     # Additional context
     metadata = models.JSONField(default=dict, blank=True)
-    timestamp = models.DateTimeField(auto_now_add=True)
+    # timestamp = models.DateTimeField(auto_now_add=True)
+    timestamp = models.DateTimeField(default=timezone.now)
 
     class Meta:
         ordering = ["-timestamp"]

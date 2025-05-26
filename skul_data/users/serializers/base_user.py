@@ -17,6 +17,8 @@ class BaseUserSerializer(serializers.ModelSerializer):
             "id",
             "username",
             "email",
+            "first_name",
+            "last_name",
             "user_type",
             "user_tag",
             "is_active",

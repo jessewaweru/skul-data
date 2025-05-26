@@ -7,6 +7,7 @@ from django.contrib.contenttypes.models import ContentType
 from skul_data.action_logs.models.action_log import ActionLog
 from skul_data.action_logs.serializers.action_log import ActionLogSerializer
 from skul_data.users.permissions.permission import IsAdministrator
+from skul_data.action_logs.models.action_log import ActionCategory
 
 
 class ActionLogViewSet(viewsets.ReadOnlyModelViewSet):
@@ -54,4 +55,4 @@ class ActionLogViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=["get"])
     def category_options(self, request):
         """Get available category options"""
-        return Response(ActionLog.ActionCategory.choices)
+        return Response(ActionCategory.choices)
