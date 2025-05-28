@@ -25,6 +25,8 @@ from skul_data.documents.serializers.document import (
     DocumentShareLinkSerializer,
     DocumentShareLink,
 )
+from skul_data.action_logs.signals.action_log import log_action
+from skul_data.action_logs.models.action_log import ActionCategory
 
 
 class DocumentCategoryViewSet(viewsets.ModelViewSet):
@@ -136,7 +138,56 @@ class DocumentViewSet(viewsets.ModelViewSet):
         return queryset.none()
 
     def perform_create(self, serializer):
-        serializer.save(uploaded_by=self.request.user)
+        # Set user context for signal
+        instance = serializer.save(uploaded_by=self.request.user)
+        instance._current_user = self.request.user
+
+        # Manual log for additional context
+        log_action(
+            user=self.request.user,
+            action=f"Uploaded document: {instance.title}",
+            category=ActionCategory.UPLOAD,
+            obj=instance,
+            metadata={
+                "file_size": instance.file_size,
+                "file_type": instance.file_type,
+                "category": instance.category.name if instance.category else None,
+            },
+        )
+
+    def perform_update(self, serializer):
+        """Log document updates"""
+        # Get the old instance for comparison
+        old_instance = self.get_object()
+        old_title = old_instance.title
+
+        # Save the updated instance
+        instance = serializer.save()
+        instance._current_user = self.request.user
+
+        # Prepare change tracking
+        changes = {}
+        if hasattr(serializer, "validated_data"):
+            for field, new_value in serializer.validated_data.items():
+                old_value = getattr(old_instance, field, None)
+                if old_value != new_value:
+                    changes[field] = {
+                        "old": str(old_value) if old_value is not None else None,
+                        "new": str(new_value) if new_value is not None else None,
+                    }
+
+        # Manual log for document update
+        log_action(
+            user=self.request.user,
+            action=f"Updated Document",  # This matches your test expectation
+            category=ActionCategory.UPDATE,
+            obj=instance,
+            metadata={
+                "changes": changes,
+                "previous_title": old_title,
+                "current_title": instance.title,
+            },
+        )
 
     @action(detail=False, methods=["post"])
     def bulk_upload(self, request):
@@ -188,6 +239,19 @@ class DocumentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Log the bulk operation
+        log_action(
+            user=request.user,
+            action=f"Bulk uploaded {len(uploaded_docs)} documents",
+            category=ActionCategory.UPLOAD,
+            metadata={
+                "document_count": len(uploaded_docs),
+                "document_ids": [doc.id for doc in uploaded_docs],
+                "category": category,
+                "is_zip": bool(zip_file),
+            },
+        )
+
         serializer = self.get_serializer(uploaded_docs, many=True)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -202,12 +266,30 @@ class DocumentViewSet(viewsets.ModelViewSet):
         serializer = DocumentShareLinkSerializer(
             data=data, context={"request": request}
         )
-        if serializer.is_valid():
-            serializer.save(created_by=request.user)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        # if serializer.is_valid():
+        #     serializer.save(created_by=request.user)
+        #     return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-        print(f"Serializer errors: {serializer.errors}")
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # print(f"Serializer errors: {serializer.errors}")
+        # return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        if serializer.is_valid():
+            share_link = serializer.save(created_by=request.user)
+            share_link._current_user = request.user  # For potential signals
+
+            # Manual logging
+            log_action(
+                user=request.user,
+                action=f"Generated share link for: {document.title}",
+                category=ActionCategory.SHARE,
+                obj=share_link,
+                metadata={
+                    "document_id": document.id,
+                    "expires_at": share_link.expires_at.isoformat(),
+                    "has_password": bool(share_link.password),
+                },
+            )
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=["get"])
     def bulk_download(self, request):
@@ -224,6 +306,20 @@ class DocumentViewSet(viewsets.ModelViewSet):
             document_ids = request.query_params.getlist("ids")
 
         documents = self.get_queryset().filter(id__in=document_ids)
+
+        if documents.exists():
+            log_action(
+                user=request.user,
+                action=f"Bulk downloaded {documents.count()} documents",
+                category=ActionCategory.DOWNLOAD,
+                metadata={
+                    "document_count": documents.count(),
+                    "document_ids": list(documents.values_list("id", flat=True)),
+                    "document_titles": list(
+                        documents.values_list("title", flat=True)[:10]
+                    ),  # First 10 titles
+                },
+            )
 
         if not documents.exists():
             return Response(
@@ -252,16 +348,45 @@ class DocumentShareLinkViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         return super().get_queryset().filter(created_by=self.request.user)
 
+    def perform_create(self, serializer):
+        """Ensure current user is set when creating share links"""
+        instance = serializer.save(created_by=self.request.user)
+        instance._current_user = self.request.user
+        return instance
+
     @action(detail=False, methods=["get"], url_path="download/(?P<token>[^/.]+)")
     def download(self, request, token=None):
         try:
             share_link = DocumentShareLink.objects.get(token=token)
         except DocumentShareLink.DoesNotExist:
+            # Log failed access attempt
+            log_action(
+                user=None,  # Anonymous access
+                action=f"Failed share link access - invalid token: {token}",
+                category=ActionCategory.OTHER,
+                metadata={
+                    "ip_address": self.get_client_ip(request),
+                    "user_agent": request.META.get("HTTP_USER_AGENT", "")[:200],
+                    "token": str(token)[:8] + "...",  # Partial token for security
+                },
+            )
             return Response(
                 {"detail": "Share link not found"}, status=status.HTTP_404_NOT_FOUND
             )
 
         if not share_link.is_valid():
+            log_action(
+                user=share_link.created_by,  # Link creator for context
+                action=f"Expired/invalid share link accessed: {share_link.document.title}",
+                category=ActionCategory.OTHER,
+                obj=share_link,
+                metadata={
+                    "ip_address": self.get_client_ip(request),
+                    "is_expired": share_link.is_expired(),
+                    "download_count": share_link.download_count,
+                    "download_limit": share_link.download_limit,
+                },
+            )
             return Response(
                 {
                     "detail": "This share link is expired or has reached its download limit"
@@ -272,12 +397,24 @@ class DocumentShareLinkViewSet(viewsets.ModelViewSet):
         # Check password if set
         password = request.query_params.get("password")
         if share_link.password and share_link.password != password:
+            log_action(
+                user=share_link.created_by,
+                action=f"Failed password attempt for share link: {share_link.document.title}",
+                category=ActionCategory.OTHER,
+                obj=share_link,
+                metadata={
+                    "ip_address": self.get_client_ip(request),
+                    "user_agent": request.META.get("HTTP_USER_AGENT", "")[:200],
+                },
+            )
             return Response(
                 {"detail": "Invalid password"}, status=status.HTTP_403_FORBIDDEN
             )
 
-        # Increment download count
+        # Increment download count with proper tracking
+        share_link._current_user = share_link.created_by
         share_link.download_count += 1
+        share_link._download_increment = True
         share_link.save()
 
         document = share_link.document
@@ -289,3 +426,11 @@ class DocumentShareLinkViewSet(viewsets.ModelViewSet):
             f'attachment; filename="{os.path.basename(document.file.name)}"'
         )
         return response
+
+    def get_client_ip(self, request):
+        x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+        return (
+            x_forwarded_for.split(",")[0]
+            if x_forwarded_for
+            else request.META.get("REMOTE_ADDR")
+        )

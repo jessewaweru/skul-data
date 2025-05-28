@@ -19,6 +19,7 @@ from skul_data.analytics.models.analytics import (
     AnalyticsAlert,
 )
 from skul_data.action_logs.models.action_log import ActionLog, ActionCategory
+from skul_data.documents.models.document import DocumentShareLink
 
 User = get_user_model()
 
@@ -356,3 +357,24 @@ def create_test_document_category(school, name="Test Category", **kwargs):
         is_custom=kwargs.get("is_custom", True),
         school=school,
     )
+
+
+def create_test_document_share_link(document, created_by, **kwargs):
+    return DocumentShareLink.objects.create(
+        document=document,
+        created_by=created_by,
+        token=kwargs.get("token", uuid.uuid4().hex),
+        expires_at=kwargs.get("expires_at", timezone.now() + timedelta(days=7)),
+        download_limit=kwargs.get("download_limit", 10),
+        password=kwargs.get("password", None),
+    )
+
+
+def create_test_document_with_share(school, uploaded_by, **kwargs):
+    doc = create_test_document(school, uploaded_by, **kwargs)
+    share = create_test_document_share_link(
+        doc,
+        uploaded_by,
+        expires_at=kwargs.get("share_expires", timezone.now() + timedelta(days=7)),
+    )
+    return doc, share

@@ -176,6 +176,26 @@ class DocumentShareLink(models.Model):
     )
     download_count = models.PositiveIntegerField(default=0)
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Track original values for change detection
+        self._original_download_count = self.download_count
+
+    def save(self, *args, **kwargs):
+        # Track field changes
+        changed_fields = []
+        if self.pk:  # Only for existing objects
+            if self.download_count != self._original_download_count:
+                changed_fields.append("download_count")
+                if self.download_count > self._original_download_count:
+                    self._download_increment = True
+
+        self._changed_fields = changed_fields
+        super().save(*args, **kwargs)
+
+        # Update original values after save
+        self._original_download_count = self.download_count
+
     def is_expired(self):
         return timezone.now() > self.expires_at
 
@@ -183,7 +203,6 @@ class DocumentShareLink(models.Model):
         return not self.is_expired() and (
             self.download_limit is None or self.download_count < self.download_limit
         )
-        # If download_count >= download_limit → link becomes invalid.
 
     def __str__(self):
         return f"Share link for {self.document.title} (expires: {self.expires_at})"

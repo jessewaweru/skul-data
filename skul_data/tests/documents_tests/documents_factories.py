@@ -88,6 +88,8 @@ class SchoolClassFactory(factory.django.DjangoModelFactory):
 
     name = factory.Sequence(lambda n: f"Class {n}")
     school = factory.SubFactory(SchoolFactory)
+    grade_level = "Grade 1"  # Add this line
+    level = "PRIMARY"  # Add this line if needed
 
 
 class RoleFactory(factory.django.DjangoModelFactory):

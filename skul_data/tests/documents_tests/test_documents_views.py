@@ -20,6 +20,9 @@ from skul_data.documents.models.document import (
     Document,
     DocumentShareLink,
 )
+from skul_data.action_logs.models.action_log import ActionLog, ActionCategory
+from skul_data.users.models import User
+from skul_data.users.models.teacher import Teacher
 
 
 class DocumentCategoryViewSetTest(APITestCase):
@@ -352,6 +355,140 @@ class DocumentShareLinkViewSetTest(APITestCase):
         self.assertIn(
             response.status_code, [status.HTTP_200_OK, status.HTTP_404_NOT_FOUND]
         )
+
+
+class DocumentViewSetLoggingTest(APITestCase):
+    """Tests specifically for action logging in DocumentViewSet"""
+
+    def setUp(self):
+        self.school = SchoolFactory()
+        self.admin = self.school.schooladmin
+        self.teacher = UserFactory(user_type=User.TEACHER)
+        Teacher.objects.create(user=self.teacher, school=self.school)
+
+        self.category = DocumentCategoryFactory(school=self.school)
+        self.test_file = SimpleUploadedFile(
+            "test_file.pdf", b"file_content", content_type="application/pdf"
+        )
+        self.client.force_authenticate(user=self.admin)
+
+    def test_document_upload_logging(self):
+        """Test that document upload creates proper action log"""
+        url = reverse("documents:document-list")
+        data = {
+            "title": "Logged Upload",
+            "file": self.test_file,
+            "category_id": self.category.id,
+            "school_id": self.school.id,
+        }
+
+        response = self.client.post(url, data, format="multipart")
+
+        # Debug the response if it's not 201
+        if response.status_code != status.HTTP_201_CREATED:
+            print(f"Response status: {response.status_code}")
+            print(f"Response data: {response.data}")
+            print(f"Response content: {response.content}")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        doc = Document.objects.get(title="Logged Upload")
+        log = ActionLog.objects.filter(
+            content_type__model="document",
+            object_id=doc.id,
+            category=ActionCategory.UPLOAD,
+        ).first()
+
+        self.assertIsNotNone(log)
+        self.assertEqual(log.user, self.admin)
+        self.assertEqual(log.action, f"Uploaded document: {doc.title}")
+        self.assertEqual(log.metadata["file_type"], ".pdf")
+        self.assertGreater(log.metadata["file_size"], 0)
+
+    def test_bulk_upload_logging(self):
+        """Test that bulk upload creates proper action log"""
+        url = reverse("documents:document-bulk-upload")
+        file2 = SimpleUploadedFile(
+            "test_file2.pdf", b"file_content", content_type="application/pdf"
+        )
+        data = {
+            "files": [self.test_file, file2],
+            "category": self.category.id,
+            "school": self.school.id,
+        }
+
+        response = self.client.post(url, data, format="multipart")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        log = ActionLog.objects.filter(
+            category=ActionCategory.UPLOAD, action__startswith="Bulk uploaded"
+        ).first()
+
+        self.assertIsNotNone(log)
+        self.assertEqual(log.user, self.admin)
+        self.assertEqual(log.metadata["document_count"], 2)
+        self.assertEqual(len(log.metadata["document_ids"]), 2)
+
+    def test_document_update_logging(self):
+        """Test that document updates create proper action logs"""
+        doc = DocumentFactory(
+            title="Original Title",
+            file=self.test_file,
+            category=self.category,
+            school=self.school,
+            uploaded_by=self.admin,
+        )
+
+        url = reverse("documents:document-detail", args=[doc.id])
+        data = {"title": "Updated Title"}
+
+        response = self.client.patch(url, data)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        log = ActionLog.objects.filter(
+            content_type__model="document",
+            object_id=doc.id,
+            category=ActionCategory.UPDATE,
+        ).first()
+
+        # Debug if log is not found
+        if not log:
+            print("Available ActionLogs:")
+            for al in ActionLog.objects.all():
+                print(
+                    f"  - ID: {al.id}, Action: {al.action}, Category: {al.category}, Object: {al.content_type}"
+                )
+
+        self.assertIsNotNone(log)
+        self.assertEqual(log.user, self.admin)
+        self.assertEqual(log.action, f"Updated Document")
+
+    def test_generate_share_link_logging(self):
+        """Test that share link generation creates proper action log"""
+        doc = DocumentFactory(
+            school=self.school, uploaded_by=self.admin, category=self.category
+        )
+
+        url = reverse("documents:document-generate-share-link", args=[doc.id])
+        data = {
+            "expires_at": (timezone.now() + timedelta(days=7)).isoformat(),
+            "download_limit": 5,
+        }
+
+        response = self.client.post(url, data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        share_link = DocumentShareLink.objects.first()
+        log = ActionLog.objects.filter(
+            content_type__model="documentsharelink",
+            object_id=share_link.id,
+            category=ActionCategory.SHARE,
+        ).first()
+
+        self.assertIsNotNone(log)
+        self.assertEqual(log.user, self.admin)
+        self.assertEqual(log.metadata["document_id"], doc.id)
+        self.assertEqual(log.metadata["expires_at"], data["expires_at"])
 
 
 # python manage.py test skul_data.tests.documents_tests.test_documents_views

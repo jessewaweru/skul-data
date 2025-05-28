@@ -4,39 +4,31 @@ from skul_data.action_logs.models.action_log import ActionLog
 from skul_data.action_logs.utils.action_log import log_action
 from skul_data.action_logs.models.action_log import ActionCategory
 from skul_data.users.models import User
+from skul_data.documents.models.document import DocumentShareLink
 
 
 @receiver(post_save)
 def log_model_save(sender, instance, created, **kwargs):
-    print(f"Signal triggered for {sender.__name__}")
-
     # Skip certain models
     if (
         sender.__module__ == "django.contrib.contenttypes.models"
         or sender.__name__ == "ActionLog"
     ):
-        print(f"Skipping {sender.__name__} - excluded model")
         return
 
     # Try to get user from instance first, then from User class method
     user = getattr(instance, "_current_user", None)
     if not user:
         user = User.get_current_user()
-        print(f"No _current_user on instance, got from User.get_current_user(): {user}")
-    else:
-        print(f"Got _current_user from instance: {user}")
 
     if not user:
-        print("No user found, skipping action log")
         return
 
     # Check if user exists in database before creating log
     try:
         if user.pk and not User.objects.filter(pk=user.pk).exists():
-            print(f"User {user.pk} doesn't exist in database, skipping")
             return  # Skip logging if user doesn't exist yet
-    except Exception as e:
-        print(f"Error checking user existence: {e}")
+    except Exception:
         return  # Skip on any database errors
 
     action = f"Created {sender.__name__}" if created else f"Updated {sender.__name__}"
@@ -47,7 +39,6 @@ def log_model_save(sender, instance, created, **kwargs):
 
     def create_log():
         try:
-            print(f"Creating action log: {action} by {user}")
             log_action(
                 user=user,
                 action=action,
@@ -61,44 +52,105 @@ def log_model_save(sender, instance, created, **kwargs):
                     },
                 },
             )
-            print(f"Action log created successfully")
-        except Exception as e:
-            print(f"Failed to create action log: {e}")
+        except Exception:
+            pass
 
     transaction.on_commit(create_log)
 
 
 @receiver(post_delete)
 def log_model_delete(sender, instance, **kwargs):
-    print(f"Delete signal triggered for {sender.__name__}")
-
     if (
         sender.__module__ == "django.contrib.contenttypes.models"
         or sender.__name__ == "ActionLog"
     ):
-        print(f"Skipping {sender.__name__} - excluded model")
         return
 
     # Try to get user from instance first, then from User class method
     user = getattr(instance, "_current_user", None)
     if not user:
         user = User.get_current_user()
-        print(f"No _current_user on instance, got from User.get_current_user(): {user}")
-    else:
-        print(f"Got _current_user from instance: {user}")
 
     if not user:
-        print("No user found, skipping delete action log")
         return
 
     try:
-        print(f"Creating delete action log: Deleted {sender.__name__} by {user}")
         log_action(
             user=user,
             action=f"Deleted {sender.__name__}",
             category=ActionCategory.DELETE,
             obj=instance,
         )
-        print(f"Delete action log created successfully")
-    except Exception as e:
-        print(f"Failed to create delete action log: {e}")
+    except Exception:
+        pass
+
+
+@receiver(post_save, sender=DocumentShareLink)
+def log_share_link_creation(sender, instance, created, **kwargs):
+    """Signal handler specifically for DocumentShareLink creation and updates"""
+    try:
+        # Get user from instance or fallback methods
+        user = getattr(instance, "_current_user", None)
+        if not user:
+            user = instance.created_by  # Use the created_by field as fallback
+
+        if not user:
+            return
+
+        # Check if user exists in database
+        if user.pk and not User.objects.filter(pk=user.pk).exists():
+            return
+
+        if created:
+            # Log share link creation
+            expires_at = (
+                instance.expires_at.isoformat() if instance.expires_at else None
+            )
+
+            log_action(
+                user=user,
+                action=f"Created share link for document: {instance.document.title}",
+                category=ActionCategory.SHARE,
+                obj=instance,
+                metadata={
+                    "document_id": instance.document.id,
+                    "expires_at": expires_at,
+                    "has_password": bool(instance.password),
+                    "download_limit": instance.download_limit,
+                },
+            )
+        else:
+            # Log share link updates (like download count increments)
+            changed_fields = getattr(instance, "_changed_fields", [])
+
+            # Check if download_count was incremented
+            if "download_count" in changed_fields or hasattr(
+                instance, "_download_increment"
+            ):
+                log_action(
+                    user=user,
+                    action=f"Document downloaded via share link: {instance.document.title}",
+                    category=ActionCategory.DOWNLOAD,
+                    obj=instance,
+                    metadata={
+                        "document_id": instance.document.id,
+                        "download_count": instance.download_count,
+                        "via_share_link": True,
+                    },
+                )
+            else:
+                # General update
+                log_action(
+                    user=user,
+                    action=f"Updated share link for document: {instance.document.title}",
+                    category=ActionCategory.UPDATE,
+                    obj=instance,
+                    metadata={
+                        "document_id": instance.document.id,
+                        "fields_changed": changed_fields,
+                        "download_count": instance.download_count,
+                    },
+                )
+
+    except Exception:
+        pass

@@ -13,4 +13,4 @@ class DocumentsConfig(AppConfig):
     #     except Exception as e:
     #         print(f"⚠️ Could not seed categories: {e}")
     def ready(self):
-        pass
+        from skul_data.documents.signals import document
