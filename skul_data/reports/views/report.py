@@ -34,6 +34,8 @@ from skul_data.reports.serializers.report import (
 from skul_data.users.models.base_user import User
 from rest_framework.permissions import OR
 from skul_data.schools.models.schoolclass import SchoolClass
+from skul_data.action_logs.utils.action_log import log_action
+from skul_data.action_logs.models.action_log import ActionCategory
 
 
 class ReportTemplateViewSet(viewsets.ModelViewSet):
@@ -134,19 +136,32 @@ class GeneratedReportViewSet(viewsets.ModelViewSet):
         serializer.save(school=school, generated_by=user)
 
     @action(detail=True, methods=["post"])
-    # Custom endpoint to be used for approving reports
     def approve(self, request, pk=None):
         report = self.get_object()
+
         if not report.requires_approval:
             return Response(
                 {"detail": "This report does not require approval"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Store previous status for logging
+        previous_status = report.status
+
+        # Update report
         report.approved_by = request.user
         report.approved_at = timezone.now()
         report.status = "PUBLISHED"
         report.save()
+
+        # Log action AFTER successful approval
+        log_action(
+            user=request.user,
+            action=f"Approved report {report.title}",
+            category=ActionCategory.UPDATE,
+            obj=report,
+            metadata={"previous_status": previous_status, "new_status": "PUBLISHED"},
+        )
 
         # Send notifications
         self._send_approval_notifications(report)

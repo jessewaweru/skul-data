@@ -20,9 +20,12 @@ from skul_data.users.models.base_user import User
 from skul_data.schools.models.schoolclass import SchoolClass
 from skul_data.reports.models.academic_record import AcademicRecord, TeacherComment
 from django.conf import settings
+from skul_data.action_logs.utils.action_log import log_action_async, log_action
+from skul_data.action_logs.models.action_log import ActionCategory
 
 
 import logging
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -325,71 +328,273 @@ def generate_student_term_report(request_instance):
 
 
 def generate_class_term_reports(class_id, term, school_year, generated_by_id):
-    """Generate academic reports for all students in a class."""
+    """Generate academic reports for all students in a class using async logging."""
     try:
+        # Get the user who initiated the generation
+        from skul_data.users.models import User
+
+        user = User.objects.get(id=generated_by_id)
+
+        # Log bulk operation start - async
+        log_action_async(
+            user=user,
+            action=f"Starting bulk report generation for class {class_id}",
+            category="CREATE",
+            metadata={
+                "term": term,
+                "school_year": school_year,
+                "class_id": class_id,
+                "initiated_at": timezone.now().isoformat(),
+                "operation": "bulk_report_generation",
+                "scope": "class_level",
+            },
+        )
+
+        start_time = timezone.now()
+
         school_class = (
             SchoolClass.objects.select_related("school__academicreportconfig")
             .prefetch_related("students__guardians")
             .get(id=class_id)
         )
 
-        teacher = (
-            User.objects.select_related("teacher_profile")
-            .get(id=generated_by_id)
-            .teacher_profile
-        )
+        teacher = user.teacher_profile
 
-        # if teacher.assigned_classes != school_class:
         if school_class not in teacher.assigned_classes.all():
-            raise PermissionDenied(
-                "You can only generate reports for your assigned class"
+            error_msg = "Permission denied: Not assigned to this class"
+            log_action_async(
+                user=user,
+                action=error_msg,
+                category="SYSTEM",
+                metadata={
+                    "attempted_class": class_id,
+                    "teacher_classes": [c.id for c in teacher.assigned_classes.all()],
+                    "severity": "high",
+                },
             )
+            raise PermissionDenied(error_msg)
 
         students = school_class.students.all()
+        # Add safety check for empty class
+        if students.count() == 0:
+            error_msg = f"No students found in class {school_class.name}"
+            log_action_async(
+                user=user,
+                action=error_msg,
+                category="SYSTEM",
+                metadata={
+                    "class_id": class_id,
+                    "class_name": school_class.name,
+                    "severity": "medium",
+                    "resolution": "Ensure students are assigned to the class",
+                },
+            )
+            return {
+                "class": school_class.name,
+                "term": term,
+                "school_year": school_year,
+                "total_students": 0,
+                "reports_generated": 0,
+                "skipped_students": [],
+                "successful_reports": [],
+                "time_taken_seconds": 0,
+                "average_time_per_report": 0,
+                "error": "No students in class",
+            }
+
         school = school_class.school
 
         try:
             template = ReportTemplate.objects.get(
                 template_type="ACADEMIC", school=school
             )
-        except ReportTemplate.DoesNotExist:
-            raise ValueError(
-                f"No academic report template found for school: {school.name}"
+            log_action_async(
+                user=user,
+                action=f"Using report template {template.name}",
+                category="VIEW",
+                obj=template,
+                metadata={
+                    "template_id": template.id,
+                    "preferred_format": template.preferred_format,
+                },
             )
+        except ReportTemplate.DoesNotExist:
+            error_msg = f"No academic report template found for school: {school.name}"
+            log_action_async(
+                user=user,
+                action=error_msg,
+                category="SYSTEM",
+                metadata={
+                    "school_id": school.id,
+                    "template_type": "ACADEMIC",
+                    "severity": "critical",
+                },
+            )
+            raise ValueError(error_msg)
 
-        # Optimization: calculate once per class
+        # Calculate class average and log - async
         class_average = calculate_class_average(school_class, term, school_year)
+        log_action_async(
+            user=user,
+            action=f"Calculated class average: {class_average}",
+            category="SYSTEM",
+            metadata={
+                "class": school_class.name,
+                "term": term,
+                "school_year": school_year,
+                "average_score": class_average,
+                "calculation_time": timezone.now().isoformat(),
+            },
+        )
 
         generated_reports = []
         skipped_students = []
 
         for student in students:
-            report = generate_report_for_student(
-                student=student,
-                term=term,
-                school_year=school_year,
-                template=template,
-                teacher_user=teacher.user,
-                school=school,
-                class_average=class_average,
-            )
+            student_start_time = timezone.now()
+            try:
+                # Log individual student report start - async
+                log_action_async(
+                    user=user,
+                    action=f"Generating report for {student.full_name}",
+                    category="CREATE",
+                    obj=student,
+                    metadata={
+                        "student_id": student.id,
+                        "sequence_num": len(generated_reports) + 1,
+                        "batch_size": students.count(),
+                        "start_time": student_start_time.isoformat(),
+                    },
+                )
 
-            if not report:
+                report = generate_report_for_student(
+                    student=student,
+                    term=term,
+                    school_year=school_year,
+                    template=template,
+                    teacher_user=teacher.user,
+                    school=school,
+                    class_average=class_average,
+                )
+
+                if not report:
+                    skipped_students.append(student.full_name)
+                    log_action_async(
+                        user=user,
+                        action=f"Skipped report for {student.full_name}",
+                        category="SYSTEM",
+                        obj=student,
+                        metadata={
+                            "reason": "No academic records found",
+                            "processing_time": (
+                                timezone.now() - student_start_time
+                            ).total_seconds(),
+                        },
+                    )
+                    continue
+
+                generated_reports.append(report)
+                report_duration = (timezone.now() - student_start_time).total_seconds()
+
+                # Log successful generation - async
+                log_action_async(
+                    user=user,
+                    action=f"Generated report for {student.full_name}",
+                    category="CREATE",
+                    obj=report,
+                    metadata={
+                        "report_id": report.id,
+                        "format": report.file_format,
+                        "processing_time": report_duration,
+                        "file_size_bytes": report.file.size if report.file else None,
+                        "student_sequence": f"{len(generated_reports)}/{students.count()}",
+                    },
+                )
+
+                # Create access records for parents with async logging
+                for parent in student.guardians.all():
+                    access_expiry = timezone.now() + timedelta(
+                        days=school.academicreportconfig.parent_access_expiry_days
+                    )
+                    access = GeneratedReportAccess.objects.create(
+                        report=report,
+                        user=parent.user,
+                        expires_at=access_expiry,
+                    )
+
+                    log_action_async(
+                        user=user,
+                        action=f"Granted access to {parent.user.get_full_name()}",
+                        category="SHARE",
+                        obj=access,
+                        metadata={
+                            "expires_at": access_expiry.isoformat(),
+                            "relationship": (
+                                "Parent" if student.parent == parent else "Guardian"
+                            ),
+                            "access_duration_days": school.academicreportconfig.parent_access_expiry_days,
+                        },
+                    )
+
+                    send_report_notification(parent, report)
+
+            except Exception as e:
+                error_duration = (timezone.now() - student_start_time).total_seconds()
+                logger.error(
+                    f"Failed to generate report for student {student.id}: {str(e)}"
+                )
                 skipped_students.append(student.full_name)
+                log_action_async(
+                    user=user,
+                    action=f"Failed to generate report for {student.full_name}",
+                    category="SYSTEM",
+                    obj=student,
+                    metadata={
+                        "error": str(e),
+                        "processing_time": error_duration,
+                        "traceback": traceback.format_exc(),
+                        "retry_possible": False,
+                        "severity": "medium",
+                    },
+                )
                 continue
 
-            generated_reports.append(report)
-
-            for parent in student.guardians.all():
-                GeneratedReportAccess.objects.create(
-                    report=report,
-                    user=parent.user,
-                    expires_at=timezone.now()
-                    + timedelta(
-                        days=school.academicreportconfig.parent_access_expiry_days
-                    ),
-                )
-                send_report_notification(parent, report)
+        # Log bulk operation completion - async
+        total_duration = (timezone.now() - start_time).total_seconds()
+        success_rate = (
+            (len(generated_reports) / students.count()) * 100
+            if students.count() > 0
+            else 0
+        )
+        log_action_async(
+            user=user,
+            action=f"Completed bulk report generation for {school_class.name}",
+            category="SYSTEM",
+            metadata={
+                "class_id": class_id,
+                "term": term,
+                "school_year": school_year,
+                "total_students": students.count(),
+                "successful_reports": len(generated_reports),
+                "skipped_students": len(skipped_students),
+                # "success_rate": f"{(len(generated_reports)/students.count())*100:.1f}%",
+                "success_rate": f"{success_rate:.1f}%",
+                "total_time_seconds": total_duration,
+                "avg_time_per_report": (
+                    total_duration / len(generated_reports) if generated_reports else 0
+                ),
+                "completion_time": timezone.now().isoformat(),
+                "performance": (
+                    "good"
+                    if (len(generated_reports) / students.count()) > 0.9
+                    else (
+                        "acceptable"
+                        if (len(generated_reports) / students.count()) > 0.7
+                        else "poor"
+                    )
+                ),
+            },
+        )
 
         return {
             "class": school_class.name,
@@ -398,14 +603,66 @@ def generate_class_term_reports(class_id, term, school_year, generated_by_id):
             "total_students": students.count(),
             "reports_generated": len(generated_reports),
             "skipped_students": skipped_students,
-            "successful_reports": generated_reports,
+            "successful_reports": [r.id for r in generated_reports],
+            "time_taken_seconds": total_duration,
+            "average_time_per_report": (
+                total_duration / len(generated_reports) if generated_reports else 0
+            ),
         }
 
-    except SchoolClass.DoesNotExist:
-        raise ValueError(f"Class with ID {class_id} does not exist")
-
-    except User.DoesNotExist:
-        raise ValueError(f"User with ID {generated_by_id} does not exist")
+    except SchoolClass.DoesNotExist as e:
+        error_msg = f"Class {class_id} not found"
+        log_action_async(
+            user=user if "user" in locals() else None,
+            action=error_msg,
+            category="SYSTEM",
+            metadata={
+                "class_id": class_id,
+                "error": str(e),
+                "severity": "critical",
+                "resolution": "Check class existence before operation",
+            },
+        )
+        raise ValueError(error_msg)
+    except User.DoesNotExist as e:
+        error_msg = f"User {generated_by_id} not found"
+        log_action_async(
+            user=None,
+            action=error_msg,
+            category="SYSTEM",
+            metadata={
+                "user_id": generated_by_id,
+                "error": str(e),
+                "severity": "critical",
+                "resolution": "Validate user before operation",
+            },
+        )
+        raise ValueError(error_msg)
+    except Exception as e:
+        error_msg = f"Bulk report generation failed for class {class_id}"
+        logger.error(f"{error_msg}: {str(e)}")
+        log_action_async(
+            user=user if "user" in locals() else None,
+            action=error_msg,
+            category="SYSTEM",
+            metadata={
+                "class_id": class_id,
+                "term": term,
+                "school_year": school_year,
+                "error": str(e),
+                "traceback": traceback.format_exc(),
+                "severity": "critical",
+                "processing_time": (
+                    (timezone.now() - start_time).total_seconds()
+                    if "start_time" in locals()
+                    else None
+                ),
+                "completed_reports": (
+                    len(generated_reports) if "generated_reports" in locals() else 0
+                ),
+            },
+        )
+        raise
 
 
 def calculate_class_average(school_class, term, school_year):
@@ -468,6 +725,13 @@ def get_teacher_comments(student, term, school_year):
 
 def send_report_notification(user, report):
     """Send notification about a generated report"""
+    log_action(
+        user=None,  # or the system user if you have one
+        action=f"Shared report {report.title} with {user.email or user.username}",
+        category=ActionCategory.SHARE,
+        obj=report,
+        metadata={"notification_method": "BOTH" if user.email else "IN_APP"},
+    )
     if user.email:
         send_report_email_notification(user, report)
 

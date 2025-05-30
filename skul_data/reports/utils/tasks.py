@@ -34,7 +34,8 @@ from skul_data.reports.utils.report_generator import (
     generate_class_term_reports,
     generate_student_term_report,
 )
-from skul_data.schools.utils.school import get_current_term
+from skul_data.action_logs.utils.action_log import log_action_async
+import traceback
 
 logger = get_task_logger(__name__)
 
@@ -43,7 +44,36 @@ logger = get_task_logger(__name__)
 def generate_student_term_report_task(self, request_id):
     """Generate a student term report from a request"""
     try:
+        # Log task initiation - using async since we're in a Celery task
+        log_action_async(
+            user=None,
+            action=f"Starting student term report generation for request {request_id}",
+            category="SYSTEM",
+            metadata={
+                "task_id": self.request.id,
+                "request_id": request_id,
+                "task_name": "generate_student_term_report_task",
+            },
+        )
+
         request = TermReportRequest.objects.get(id=request_id)
+
+        # Add context to the request object for logging
+        request._current_user = None  # Mark as system-generated
+
+        # Log before generation - using async
+        log_action_async(
+            user=None,
+            action=f"Processing report request for student {request.student.full_name}",
+            category="SYSTEM",
+            obj=request,
+            metadata={
+                "term": request.term,
+                "school_year": request.school_year,
+                "status": request.status,
+                "student_id": request.student.id,
+            },
+        )
 
         # Call the actual report generation function
         generate_student_term_report(request)
@@ -52,19 +82,84 @@ def generate_student_term_report_task(self, request_id):
         request.status = "COMPLETED"
         request.save()
 
-        return f"Successfully generated report for request {request_id}"
+        # Log successful completion - using async
+        log_action_async(
+            user=None,
+            action=f"Successfully generated report for request {request_id}",
+            category="SYSTEM",
+            obj=request.generated_report,
+            metadata={
+                "report_id": (
+                    request.generated_report.id if request.generated_report else None
+                ),
+                "time_taken": (
+                    self.request.tasks[self.request.id].time_taken
+                    if hasattr(self.request, "tasks")
+                    else None
+                ),
+                "file_size": (
+                    request.generated_report.file.size
+                    if request.generated_report and request.generated_report.file
+                    else None
+                ),
+            },
+        )
+
+        return {
+            "status": "success",
+            "request_id": request_id,
+            "report_id": (
+                request.generated_report.id if request.generated_report else None
+            ),
+        }
 
     except TermReportRequest.DoesNotExist:
-        logger.error(f"TermReportRequest with id {request_id} does not exist")
+        error_msg = f"TermReportRequest with id {request_id} does not exist"
+        logger.error(error_msg)
+        log_action_async(
+            user=None,
+            action=error_msg,
+            category="SYSTEM",
+            metadata={
+                "task_id": self.request.id,
+                "request_id": request_id,
+                "error": "Request not found",
+                "severity": "high",
+            },
+        )
         raise
     except Exception as e:
-        logger.error(f"Failed to generate report for request {request_id}: {str(e)}")
+        error_msg = f"Failed to generate report for request {request_id}: {str(e)}"
+        logger.error(error_msg)
+
+        # Log the error with traceback - using async
+        log_action_async(
+            user=None,
+            action=error_msg,
+            category="SYSTEM",
+            metadata={
+                "task_id": self.request.id,
+                "request_id": request_id,
+                "error": str(e),
+                "traceback": traceback.format_exc(),
+                "retry_count": self.request.retries,
+            },
+        )
 
         # Update request status on failure
         try:
             request = TermReportRequest.objects.get(id=request_id)
             request.status = "FAILED"
             request.save()
+
+            # Log the failure status update - using async
+            log_action_async(
+                user=None,
+                action=f"Marked request {request_id} as FAILED",
+                category="SYSTEM",
+                obj=request,
+                metadata={"error": str(e), "final_status": "FAILED"},
+            )
         except TermReportRequest.DoesNotExist:
             pass
 

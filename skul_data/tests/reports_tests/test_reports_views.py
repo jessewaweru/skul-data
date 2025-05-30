@@ -18,7 +18,8 @@ from skul_data.reports.models.report import (
     GeneratedReport,
     TermReportRequest,
 )
-from datetime import date
+from skul_data.action_logs.models.action_log import ActionCategory
+from unittest.mock import patch
 
 
 class ReportTemplateViewSetTest(APITestCase):
@@ -71,6 +72,10 @@ class ReportTemplateViewSetTest(APITestCase):
 
 class GeneratedReportViewSetTest(APITestCase):
     def setUp(self):
+        # Enable test mode for action logging
+        from skul_data.action_logs.utils.action_log import set_test_mode
+
+        set_test_mode(True)
         self.school, self.admin = create_test_school()
         self.client.force_authenticate(user=self.admin)
         self.template = create_test_report_template(
@@ -80,6 +85,12 @@ class GeneratedReportViewSetTest(APITestCase):
             school=self.school, report_type=self.template, generated_by=self.admin
         )
         self.url = reverse("generated-report-list")
+
+    def tearDown(self):
+        # Disable test mode after tests
+        from skul_data.action_logs.utils.action_log import set_test_mode
+
+        set_test_mode(False)
 
     def test_list_reports(self):
         response = self.client.get(self.url)
@@ -123,6 +134,40 @@ class GeneratedReportViewSetTest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(GeneratedReport.objects.count(), 2)
 
+    @patch("skul_data.reports.views.report.log_action")
+    def test_approve_report_logging(self, mock_log_action):
+        # Setup
+        self.report.requires_approval = True
+        self.report.save()
+
+        url = reverse("generated-report-approve", args=[self.report.id])
+
+        # Execute
+        response = self.client.post(url)
+
+        # Assert response
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, {"status": "approved"})
+
+        # Refresh report
+        self.report.refresh_from_db()
+        self.assertEqual(self.report.status, "PUBLISHED")
+        self.assertEqual(self.report.approved_by, self.admin)
+
+        # Verify logging was called
+        mock_log_action.assert_called_once()
+
+        # Verify logging call details
+        args, kwargs = mock_log_action.call_args
+        self.assertEqual(kwargs["user"], self.admin)
+        self.assertIn(f"Approved report {self.report.title}", kwargs["action"])
+        self.assertEqual(kwargs["category"], ActionCategory.UPDATE)
+        self.assertEqual(kwargs["obj"], self.report)
+        self.assertEqual(
+            kwargs["metadata"]["previous_status"], "DRAFT"
+        )  # or whatever initial status was
+        self.assertEqual(kwargs["metadata"]["new_status"], "PUBLISHED")
+
 
 class AcademicReportViewSetTest(APITestCase):
     def setUp(self):
@@ -130,14 +175,15 @@ class AcademicReportViewSetTest(APITestCase):
         self.teacher = create_test_teacher(self.school)
         self.client.force_authenticate(user=self.teacher.user)
 
-        # self.student = create_test_student(self.school)
+        # Create class first
+        self.school_class = create_test_class(school=self.school, teacher=self.teacher)
+
+        # Create student and assign to class
         self.student = create_test_student(
             school=self.school, first_name="Test", last_name="Student"
         )
-        # self.school_class = create_test_class(self.school)
-        self.school_class = create_test_class(
-            school=self.school, teacher=self.teacher  # Explicitly assign teacher
-        )
+
+        # IMPORTANT: Assign student to the class
         self.student.student_class = self.school_class
         self.student.save()
 

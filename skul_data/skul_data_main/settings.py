@@ -224,8 +224,8 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
-# # Only enable eager mode during tests
-# if "test" in sys.argv:
-#     CELERY_TASK_ALWAYS_EAGER = True
-#     CELERY_TASK_EAGER_PROPAGATES = True
-#     print("\nRunning in TEST mode - Celery tasks will execute synchronously\n")
+# Only enable eager mode during tests
+if "test" in sys.argv:
+    CELERY_TASK_ALWAYS_EAGER = True
+    CELERY_TASK_EAGER_PROPAGATES = True
+    print("\nRunning in TEST mode - Celery tasks will execute synchronously\n")

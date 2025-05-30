@@ -12,6 +12,7 @@ from skul_data.tests.reports_tests.test_helpers import (
     create_test_generated_report,
     create_test_academic_record,
     create_test_teacher_comment,
+    create_test_subject,
 )
 from skul_data.reports.models.report import (
     GeneratedReport,
@@ -25,6 +26,8 @@ from skul_data.reports.utils.report_generator import (
     generate_class_term_reports,
     calculate_class_average,
 )
+from skul_data.reports.models.academic_record import AcademicRecord, TeacherComment
+from skul_data.reports.models.report import ReportTemplate
 
 
 class ReportGeneratorTest(TestCase):
@@ -302,6 +305,153 @@ class GenerateReportFunctionsTest(TestCase):
 
         # Assertions (85.5 + 65.5) / 2 = 75.5
         self.assertEqual(average, 75.5)
+
+
+class BulkReportGenerationLoggingTest(TestCase):
+    def setUp(self):
+        print("\n=== Starting setUp ===")
+        self.school, self.admin = create_test_school()
+        print(f"Created school: {self.school.name}, admin: {self.admin.email}")
+
+        self.teacher = create_test_teacher(self.school)
+        print(f"Created teacher: {self.teacher.user.email}")
+
+        self.parent = create_test_parent(self.school)
+        print(f"Created parent: {self.parent.user.email}")
+
+        self.student = create_test_student(self.school, parent=self.parent)
+        print(f"Created student: {self.student.full_name}")
+
+        self.school_class = create_test_class(self.school, teacher=self.teacher)
+        print(f"Created class: {self.school_class.name}")
+
+        # Assign student to class
+        self.student.student_class = self.school_class
+        self.student.save()
+        self.school_class.students.add(self.student)
+        print(f"Assigned student to class. Student class: {self.student.student_class}")
+
+        # Create required academic data
+        self.subject = create_test_subject(self.school)
+        print(f"Created subject: {self.subject.name}")
+
+        self.academic_record = create_test_academic_record(
+            self.student, self.subject, self.teacher, term="Term 1", school_year="2023"
+        )
+        print(f"Created academic record with score: {self.academic_record.score}")
+
+        self.teacher_comment = create_test_teacher_comment(
+            self.student, self.teacher, term="Term 1", school_year="2023"
+        )
+        print(f"Created teacher comment: {self.teacher_comment.content[:50]}...")
+
+        # Create report template
+        self.report_template = create_test_report_template(
+            self.school, self.admin, template_type="ACADEMIC"
+        )
+        print(f"Created report template: {self.report_template.name}")
+
+        AcademicReportConfig.objects.create(
+            school=self.school, parent_access_expiry_days=30
+        )
+        print("Created AcademicReportConfig")
+        print("=== Finished setUp ===\n")
+
+        # Verify the student is properly assigned to class
+        print(f"Student class after assignment: {self.student.student_class}")
+        print(f"Class students: {list(self.school_class.students.all())}")
+
+        # Verify academic records exist
+        print(f"Academic records count: {AcademicRecord.objects.count()}")
+        print(f"Teacher comments count: {TeacherComment.objects.count()}")
+
+        # Verify report template exists
+        print(
+            f"Report template exists: {ReportTemplate.objects.filter(id=self.report_template.id).exists()}"
+        )
+
+    @patch("skul_data.reports.utils.report_generator.generate_report_for_student")
+    @patch(
+        "skul_data.reports.utils.report_generator.log_action_async"
+    )  # Patch at the correct location
+    def test_bulk_report_generation_logging(self, mock_log, mock_generate):
+        """Test comprehensive logging in bulk report generation"""
+        print("\n=== Starting test_bulk_report_generation_logging ===")
+
+        # Setup mock report
+        mock_report = create_test_generated_report(
+            school=self.school,
+            report_type=self.report_template,
+            generated_by=self.teacher.user,
+        )
+        mock_generate.return_value = mock_report
+        print("Mock report setup complete")
+
+        # Execute
+        print("Calling generate_class_term_reports...")
+        result = generate_class_term_reports(
+            class_id=self.school_class.id,
+            term="Term 1",
+            school_year="2023",
+            generated_by_id=self.teacher.user.id,
+        )
+        print("Function call completed")
+
+        # Debug: Show mock calls
+        print(f"Mock generate calls: {mock_generate.call_count}")
+        print(f"Mock log calls: {mock_log.call_count}")
+        mock_log.assert_called()  # This will show us exactly where it fails
+
+        print("=== Finished test_bulk_report_generation_logging ===\n")
+
+    @patch("skul_data.reports.utils.report_generator.ReportTemplate.objects.get")
+    def test_bulk_report_generation_error_logging(self, mock_template_get):
+        """Test error logging in bulk report generation"""
+        print("\n=== Starting test_bulk_report_generation_error_logging ===")
+
+        # Force the mock to raise exception
+        mock_template_get.side_effect = Exception("Template not found")
+
+        # Verify the function raises the exception
+        with self.assertRaises(Exception) as context:
+            generate_class_term_reports(
+                class_id=self.school_class.id,
+                term="Term 1",
+                school_year="2023",
+                generated_by_id=self.teacher.user.id,
+            )
+
+        # Verify the correct exception was raised
+        self.assertIn("Template not found", str(context.exception))
+        print("=== Finished test_bulk_report_generation_error_logging ===\n")
+
+    @patch("skul_data.reports.utils.report_generator.generate_report_for_student")
+    @patch(
+        "skul_data.reports.utils.report_generator.log_action_async"
+    )  # Patch at correct location
+    def test_bulk_report_generation_skip_logging(self, mock_log, mock_generate):
+        """Test logging when skipping student reports"""
+        print("\n=== Starting test_bulk_report_generation_skip_logging ===")
+
+        # Setup - return None to simulate skip
+        mock_generate.return_value = None
+        print("Mock setup to return None")
+
+        # Execute
+        print("Calling generate_class_term_reports...")
+        result = generate_class_term_reports(
+            class_id=self.school_class.id,
+            term="Term 1",
+            school_year="2023",
+            generated_by_id=self.teacher.user.id,
+        )
+        print("Function call completed")
+
+        # Verify skip logging occurred
+        print(f"Mock log calls: {mock_log.call_count}")
+        mock_log.assert_called()  # Will show exact failure point
+
+        print("=== Finished test_bulk_report_generation_skip_logging ===\n")
 
 
 # python manage.py test skul_data.tests.reports_tests.test_reports_utils
