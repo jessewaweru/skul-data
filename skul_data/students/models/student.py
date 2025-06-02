@@ -1,5 +1,7 @@
 from django.db import models
 from django.utils import timezone
+from skul_data.action_logs.utils.action_log import log_action
+from skul_data.action_logs.models.action_log import ActionCategory
 
 
 class StudentStatus(models.TextChoices):
@@ -126,21 +128,54 @@ class Student(models.Model):
         self.status = StudentStatus.GRADUATED
         self.save()
 
-    def deactivate(self, reason):
-        """Soft delete student with a reason"""
+    # def deactivate(self, reason):
+    #     """Soft delete student with a reason"""
+    #     self.is_active = False
+    #     self.status = StudentStatus.LEFT
+    #     self.deleted_at = timezone.now()
+    #     self.deletion_reason = reason
+    #     self.save()
+
+    #     StudentStatusChange.objects.create(
+    #         student=self,
+    #         from_status=StudentStatus.ACTIVE,
+    #         to_status=StudentStatus.LEFT,
+    #         reason=reason,
+    #         changed_by=self.teacher.user if self.teacher else None,
+    #     )
+
+    def deactivate(self, reason="No reason provided", user=None):
+        """Soft delete student with reason"""
+        old_status = self.status  # Store the old status
+
         self.is_active = False
         self.status = StudentStatus.LEFT
         self.deleted_at = timezone.now()
         self.deletion_reason = reason
         self.save()
 
+        # Create StudentStatusChange record
         StudentStatusChange.objects.create(
             student=self,
-            from_status=StudentStatus.ACTIVE,
+            from_status=old_status,
             to_status=StudentStatus.LEFT,
             reason=reason,
-            changed_by=self.teacher.user if self.teacher else None,
+            changed_by=user if user else None,
         )
+
+        # Only log the action if user is provided (for direct model calls)
+        # The viewset will handle its own logging
+        if user:
+            from skul_data.action_logs.utils.action_log import log_action
+            from skul_data.action_logs.models.action_log import ActionCategory
+
+            log_action(
+                user,
+                f"Changed student {self} status from ACTIVE to LEFT",
+                ActionCategory.UPDATE,
+                self,
+                {"reason": reason, "previous_status": old_status},
+            )
 
     @property
     def phone_number(self):
@@ -189,6 +224,25 @@ class StudentStatusChange(models.Model):
 
     def __str__(self):
         return f"{self.student} - {self.from_status} to {self.to_status}"
+
+    def save(self, *args, **kwargs):
+        is_new = self._state.adding
+        super().save(*args, **kwargs)
+
+        if is_new:  # Only log for new creations
+            log_action(
+                self.changed_by,
+                f"Changed student {self.student} status from {self.from_status} to {self.to_status}",
+                ActionCategory.UPDATE,
+                self.student,
+                {
+                    "change_id": self.id,
+                    "reason": self.reason,
+                    "from_status": self.from_status,
+                    "to_status": self.to_status,
+                    "changed_at": self.changed_at.isoformat(),
+                },
+            )
 
 
 class StudentDocument(models.Model):

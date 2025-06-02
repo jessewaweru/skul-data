@@ -103,24 +103,27 @@ def create_test_teacher(school, email="teacher@test.com"):
     )
     teacher = Teacher.objects.create(user=user, school=school)
 
-    # Create a role with teacher permissions
-    role = Role.objects.create(
-        name="Class Teacher",
+    # Get or create the role to avoid duplicates
+    role, created = Role.objects.get_or_create(
+        name=f"Class Teacher-{school.id}",  # Make unique per school
         school=school,
-        role_type="CUSTOM",
+        defaults={
+            "role_type": "CUSTOM",
+        },
     )
 
-    # Add teacher-specific permissions
-    teacher_permissions = [
-        ("view_classes", "View classes"),
-        ("view_class_timetables", "View class timetables"),
-        ("manage_attendance", "Manage attendance"),
-        ("view_students", "View students"),
-    ]
+    if created:
+        # Add teacher-specific permissions only if newly created
+        teacher_permissions = [
+            ("view_classes", "View classes"),
+            ("view_class_timetables", "View class timetables"),
+            ("manage_attendance", "Manage attendance"),
+            ("view_students", "View students"),
+        ]
 
-    for code, name in teacher_permissions:
-        perm, _ = Permission.objects.get_or_create(code=code, name=name)
-        role.permissions.add(perm)
+        for code, name in teacher_permissions:
+            perm, _ = Permission.objects.get_or_create(code=code, name=name)
+            role.permissions.add(perm)
 
     user.role = role
     user.save()
@@ -139,19 +142,6 @@ def create_test_parent(school, email="parent@test.com"):
         phone_number="+1234567890",
         address="123 Test Street",
     )
-
-
-# def create_test_class(school, name="Form 1", grade_level=None, **kwargs):
-#     if grade_level is None:
-#         grade_level = name
-#     defaults = {
-#         "name": name,
-#         "grade_level": grade_level,
-#         "school": school,
-#         "academic_year": "2023",
-#     }
-#     defaults.update(kwargs)
-#     return SchoolClass.objects.create(**defaults)
 
 
 def create_test_class(school, name=None, grade_level=None, **kwargs):
@@ -194,3 +184,35 @@ def create_test_subject(school, name="Mathematics", code="MATH"):
         code=code,
         school=school,
     )
+
+
+def get_last_action_log():
+    """Helper to get the most recent action log"""
+    from skul_data.action_logs.models.action_log import ActionLog
+
+    # Add some debugging
+    log = ActionLog.objects.last()
+    if log is None:
+        print("No action logs found in database")
+        print(f"Total logs: {ActionLog.objects.count()}")
+    else:
+        print(
+            f"Last log: user={log.user}, action={log.action}, content_object={log.content_object}"
+        )
+
+    return log
+
+
+def assert_action_log_exists(**kwargs):
+    """Assert that an action log exists with the given parameters"""
+    from skul_data.action_logs.models.action_log import ActionLog
+
+    logs = ActionLog.objects.filter(**kwargs)
+    if not logs.exists():
+        print(f"No logs found for: {kwargs}")
+        print(
+            f"Available logs: {list(ActionLog.objects.values('user', 'action', 'category'))}"
+        )
+
+    assert logs.exists(), f"No action log found matching: {kwargs}"
+    return logs.first()

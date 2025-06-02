@@ -33,6 +33,9 @@ from django.utils import timezone
 from django_filters import rest_framework as filters
 from django_filters.rest_framework import DjangoFilterBackend
 from skul_data.users.models.base_user import User
+from skul_data.action_logs.models.action_log import ActionCategory
+from skul_data.action_logs.utils.action_log import log_action
+from rest_framework.permissions import OR
 
 
 class StudentFilter(filters.FilterSet):
@@ -145,12 +148,24 @@ class StudentViewSet(viewsets.ModelViewSet):
             )
         return super().partial_update(request, *args, **kwargs)
 
+    # Fix for perform_create method in StudentViewSet
     def perform_create(self, serializer):
-        serializer.save(school=self.request.user.school)
+        instance = serializer.save(school=self.request.user.school)
+
+        # Add logging for student creation
+        log_action(
+            self.request.user,
+            f"POST /students/students/",
+            ActionCategory.CREATE,
+            instance,
+            {"fields_changed": None},  # For create operations
+        )
 
     def perform_destroy(self, instance):
         """Override delete to perform soft delete"""
-        instance.deactivate(reason="Deleted via admin dashboard")
+        instance.deactivate(
+            reason="Deleted via admin dashboard", user=self.request.user
+        )
         instance.save()
 
     @action(detail=True, methods=["post"])
@@ -180,7 +195,21 @@ class StudentViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         new_class = serializer.validated_data["new_class_id"]
+        old_class = student.student_class
         student.promote(new_class)
+
+        log_action(
+            request.user,
+            f"Promoted student {student} to class {new_class}",
+            ActionCategory.UPDATE,
+            student,
+            {
+                "new_class": new_class.id,
+                "new_class_name": new_class.name,
+                "old_class": old_class.id if old_class else None,
+                "old_class_name": old_class.name if old_class else None,
+            },
+        )
 
         return Response(StudentSerializer(student).data, status=status.HTTP_200_OK)
 
@@ -191,7 +220,23 @@ class StudentViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         new_school = serializer.validated_data["new_school_id"]
+        old_school = student.school
         student.transfer(new_school)
+
+        log_action(
+            request.user,
+            f"Transferred student {student} to school {new_school}",
+            ActionCategory.UPDATE,
+            student,
+            {
+                "new_school": new_school.id,
+                "new_school_name": new_school.name,
+                "old_school": old_school.id,
+                "old_school_name": old_school.name,
+                "transfer_date": serializer.validated_data["transfer_date"],
+                "reason": serializer.validated_data["reason"],
+            },
+        )
 
         return Response(StudentSerializer(student).data, status=status.HTTP_200_OK)
 
@@ -199,15 +244,42 @@ class StudentViewSet(viewsets.ModelViewSet):
     def graduate(self, request, pk=None):
         student = self.get_object()
         student.graduate()
+
+        log_action(
+            request.user,
+            f"Graduated student {student}",
+            ActionCategory.UPDATE,
+            student,
+            {"previous_status": StudentStatus.ACTIVE},
+        )
+
         return Response({"status": "student graduated"}, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=["post"])
     def deactivate(self, request, pk=None):
         student = self.get_object()
         reason = request.data.get("reason", "No reason provided")
-        student.deactivate(reason)
+        previous_status = student.status
+
+        # Deactivate the student without automatic logging from the model
+        student.deactivate(reason, user=None)  # Don't log from model
+
+        # Log from the viewset with the expected message format
+        log_action(
+            request.user,
+            f"Deactivated student {student}",
+            ActionCategory.UPDATE,
+            student,
+            {
+                "previous_status": previous_status,
+                "reason": reason,
+                "deletion_reason": student.deletion_reason,
+            },
+        )
+
         return Response({"status": "student deactivated"}, status=status.HTTP_200_OK)
 
+    # Fix for bulk_create method
     @action(detail=False, methods=["post"])
     def bulk_create(self, request):
         serializer = StudentBulkCreateSerializer(data=request.data)
@@ -220,30 +292,47 @@ class StudentViewSet(viewsets.ModelViewSet):
 
         created = 0
         errors = []
+        row_num = 0
 
         for row_num, row in enumerate(reader, start=1):
             try:
-                # Map CSV row to student data
+                # Map CSV row to student data - Remove school from data
+                # Let the serializer handle school assignment
                 student_data = {
                     "first_name": row["first_name"],
                     "last_name": row["last_name"],
-                    "date_of_birth": row["dob"],
+                    "date_of_birth": row["date_of_birth"],
                     "gender": row["gender"],
-                    "school": request.user.school.id,
-                    "parent": row["parent"],
-                    # Add other fields as needed
+                    "parent_id": row["parent_id"],
+                    # Don't include school here - let perform_create handle it
                 }
 
-                # Create student
+                # Create student with proper context - but don't use perform_create
+                # to avoid individual logging for each student
                 student_serializer = StudentCreateSerializer(
                     data=student_data, context={"request": request}
                 )
                 student_serializer.is_valid(raise_exception=True)
-                student_serializer.save()
+                # Save directly with school assignment
+                student_serializer.save(school=request.user.school)
                 created += 1
 
             except Exception as e:
                 errors.append({"row": row_num, "error": str(e), "data": row})
+
+        # Log the bulk create action
+        log_action(
+            request.user,
+            f"Bulk created {created} students via CSV",
+            ActionCategory.CREATE,
+            None,
+            {
+                "created_count": created,
+                "error_count": len(errors),
+                "total_rows": row_num,
+                "errors": errors[:10],  # Log first 10 errors to avoid huge logs
+            },
+        )
 
         return Response(
             {"created": created, "errors": errors, "total_rows": row_num},
@@ -326,7 +415,19 @@ class StudentDocumentViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        serializer.save(uploaded_by=self.request.user)
+        instance = serializer.save(uploaded_by=self.request.user)
+        log_action(
+            self.request.user,
+            f"Uploaded document '{instance.title}' ({instance.document_type}) for student {instance.student}",
+            ActionCategory.UPLOAD,
+            instance,
+            {
+                "student_id": instance.student.id,
+                "student_name": instance.student.full_name,
+                "document_type": instance.document_type,
+                "file_size": instance.file.size if instance.file else 0,
+            },
+        )
 
 
 class StudentNoteViewSet(viewsets.ModelViewSet):
@@ -335,7 +436,7 @@ class StudentNoteViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ["create", "update", "partial_update", "destroy"]:
-            return [IsAdministrator() | IsTeacher()]
+            return [OR(IsAdministrator(), IsTeacher())]
         return [IsAuthenticated()]
 
     def get_queryset(self):
@@ -369,7 +470,41 @@ class StudentNoteViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        instance = serializer.save(created_by=self.request.user)
+        log_action(
+            self.request.user,
+            f"Added {instance.note_type} note for student {instance.student}",
+            ActionCategory.CREATE,
+            instance,
+            {
+                "student_id": instance.student.id,
+                "student_name": instance.student.full_name,
+                "note_type": instance.note_type,
+                "is_private": instance.is_private,
+            },
+        )
+
+    def perform_update(self, serializer):
+        old_note = self.get_object()
+        instance = serializer.save()
+        log_action(
+            self.request.user,
+            f"Updated note for student {instance.student}",
+            ActionCategory.UPDATE,
+            instance,
+            {
+                "student_id": instance.student.id,
+                "student_name": instance.student.full_name,
+                "note_type": instance.note_type,
+                "changes": {
+                    field: {
+                        "old": getattr(old_note, field),
+                        "new": getattr(instance, field),
+                    }
+                    for field in serializer.validated_data.keys()
+                },
+            },
+        )
 
 
 class StudentAttendanceFilter(filters.FilterSet):
@@ -453,7 +588,21 @@ class StudentAttendanceViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        serializer.save(recorded_by=self.request.user)
+        instance = serializer.save(recorded_by=self.request.user)
+        log_action(
+            self.request.user,
+            f"Recorded attendance for {instance.student} as {instance.status}",
+            ActionCategory.UPDATE,
+            instance,
+            {
+                "student_id": instance.student.id,
+                "student_name": instance.student.full_name,
+                "date": instance.date.isoformat(),
+                "status": instance.status,
+                "reason": instance.reason,
+                "time_in": str(instance.time_in) if instance.time_in else None,
+            },
+        )
 
     @action(detail=False, methods=["post"])
     def bulk_create(self, request):
@@ -509,6 +658,19 @@ class StudentAttendanceViewSet(viewsets.ModelViewSet):
                 errors.append(
                     {"student_id": student_status.get("student_id"), "error": str(e)}
                 )
+        log_action(
+            request.user,
+            f"Recorded bulk attendance for {date} - {created} created, {updated} updated",
+            ActionCategory.UPDATE,
+            None,
+            {
+                "date": date.isoformat(),
+                "created_count": created,
+                "updated_count": updated,
+                "error_count": len(errors),
+                "class_id": serializer.validated_data.get("class_id"),
+            },
+        )
 
         return Response({"created": created, "updated": updated, "errors": errors})
 
@@ -722,4 +884,48 @@ class SubjectViewSet(viewsets.ModelViewSet):
         return queryset.filter(Q(school=school) | Q(school__isnull=True))
 
     def perform_create(self, serializer):
-        serializer.save(school=self.request.user.school)
+        instance = serializer.save(school=self.request.user.school)
+        log_action(
+            self.request.user,
+            f"Created new subject {instance.name}",
+            ActionCategory.CREATE,
+            instance,
+            {
+                "school_id": instance.school.id if instance.school else None,
+                "school_name": instance.school.name if instance.school else None,
+                "code": instance.code,
+            },
+        )
+
+    def perform_update(self, serializer):
+        old_subject = self.get_object()
+        instance = serializer.save()
+        log_action(
+            self.request.user,
+            f"Updated subject {instance.name}",
+            ActionCategory.UPDATE,
+            instance,
+            {
+                "changes": {
+                    field: {
+                        "old": getattr(old_subject, field),
+                        "new": getattr(instance, field),
+                    }
+                    for field in serializer.validated_data.keys()
+                }
+            },
+        )
+
+    def perform_destroy(self, instance):
+        log_action(
+            self.request.user,
+            f"Deleted subject {instance.name}",
+            ActionCategory.DELETE,
+            None,
+            {
+                "subject_id": instance.id,
+                "subject_name": instance.name,
+                "code": instance.code,
+            },
+        )
+        instance.delete()

@@ -18,7 +18,10 @@ from skul_data.tests.students_tests.test_helpers import (
     create_test_parent,
     create_test_class,
     create_test_subject,
+    get_last_action_log,
 )
+from skul_data.action_logs.models.action_log import ActionCategory
+from skul_data.students.models.student import Student
 
 
 class StudentModelTest(TestCase):
@@ -54,13 +57,32 @@ class StudentModelTest(TestCase):
 
     def test_student_deactivate(self):
         reason = "Left school"
-        self.student.deactivate(reason)
+
+        # Pass the admin user to the deactivate method
+        self.student.deactivate(reason, user=self.admin)
+
+        # Test the student state changes
         self.assertFalse(self.student.is_active)
         self.assertEqual(self.student.status, StudentStatus.LEFT)
         self.assertEqual(self.student.deletion_reason, reason)
+
+        # Test that StudentStatusChange was created (if you added it back)
         self.assertTrue(
             StudentStatusChange.objects.filter(student=self.student).exists()
         )
+
+        # Test ActionLog creation - filter by content_type and object_id instead of content_object
+        from django.contrib.contenttypes.models import ContentType
+        from skul_data.action_logs.models.action_log import ActionLog
+
+        student_content_type = ContentType.objects.get_for_model(Student)
+        action_log_exists = ActionLog.objects.filter(
+            content_type=student_content_type,
+            object_id=self.student.id,
+            user=self.admin,
+        ).exists()
+
+        self.assertTrue(action_log_exists)
 
     def test_student_phone_email_address(self):
         # Test with primary parent
@@ -99,6 +121,25 @@ class StudentStatusChangeModelTest(TestCase):
         )
         self.assertEqual(status_change.student, self.student)
         self.assertEqual(str(status_change), f"{self.student} - ACTIVE to LEFT")
+
+    def test_status_change_logging(self):
+        status_change = StudentStatusChange.objects.create(
+            student=self.student,
+            from_status=StudentStatus.ACTIVE,
+            to_status=StudentStatus.LEFT,
+            reason="Test reason",
+            changed_by=self.admin,
+        )
+
+        # Verify the status change log was created
+        log = get_last_action_log()
+        self.assertEqual(log.user, self.admin)
+        self.assertEqual(log.category, ActionCategory.UPDATE)
+        self.assertIn(f"Changed student {self.student} status", log.action)
+        self.assertEqual(log.content_object, self.student)
+        self.assertEqual(log.metadata["reason"], "Test reason")
+        self.assertEqual(log.metadata["from_status"], "ACTIVE")
+        self.assertEqual(log.metadata["to_status"], "LEFT")
 
 
 class StudentDocumentModelTest(TestCase):
