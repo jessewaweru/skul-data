@@ -38,6 +38,7 @@ docker-compose.override.yml
 
 # Ignore all Excel files
 *.xlsx
-
+# Ignore all text files
+*.txt
 #my own readme file
 myREADME.md

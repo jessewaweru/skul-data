@@ -7,6 +7,7 @@ from django.utils import timezone
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.http import HttpResponse
+from datetime import timedelta
 from skul_data.scheduler.models.scheduler import SchoolEvent, EventRSVP
 from skul_data.scheduler.serializers.scheduler import EventRSVPSerializer
 from skul_data.scheduler.serializers.scheduler import (
@@ -16,7 +17,9 @@ from skul_data.scheduler.serializers.scheduler import (
 from django.contrib.auth import get_user_model
 from rest_framework.views import APIView
 from skul_data.users.permissions.permission import CanManageEvent
-
+from skul_data.action_logs.utils.action_log import log_action
+from skul_data.action_logs.models.action_log import ActionCategory
+from skul_data.schools.models.school import School
 
 User = get_user_model()
 
@@ -92,7 +95,9 @@ class SchoolEventListView(generics.ListCreateAPIView):
         return SchoolEventSerializer
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user, school=self.request.user.school)
+        # Pass the user and school through the context instead of save()
+        serializer.save()
+        # serializer.save(created_by=self.request.user, school=self.request.user.school)
 
 
 # 🔍 List events relevant to logged-in user (teacher or parent)
@@ -184,8 +189,23 @@ class EventRSVPView(CreateAPIView):
 
         return super().dispatch(request, *args, **kwargs)
 
+    # def perform_create(self, serializer):
+    #     serializer.save(event=self.event, user=self.request.user)
+
     def perform_create(self, serializer):
-        serializer.save(event=self.event, user=self.request.user)
+        instance = serializer.save(event=self.event, user=self.request.user)
+        log_action(
+            user=self.request.user,
+            action=f"RSVP'd '{instance.get_status_display()}' to event {self.event.id}",
+            category=ActionCategory.UPDATE,
+            obj=instance,
+            metadata={
+                "event_id": self.event.id,
+                "event_title": self.event.title,
+                "status": instance.status,
+                "note": instance.response_note,
+            },
+        )
 
 
 class EventRSVPListView(generics.ListAPIView):
@@ -202,11 +222,25 @@ class SchoolCalendarExportView(APIView):
 
     def get(self, request):
         from icalendar import Calendar, Event as ICalEvent
-        from datetime import datetime
+
+        # Get the user's school - handle different ways the school might be associated
+        user_school = None
+        if hasattr(request.user, "school") and request.user.school:
+            user_school = request.user.school
+        elif request.user.user_type == User.SCHOOL_ADMIN:
+            # If user is a school admin, get their administered school
+            user_school = School.objects.filter(schooladmin=request.user).first()
+
+        if not user_school:
+            return Response(
+                {"error": "No school associated with user"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         events = SchoolEvent.objects.filter(
-            school=request.user.school,
-            start_datetime__gte=timezone.now() - timezone.timedelta(days=30),
+            school=user_school,
+            start_datetime__gte=timezone.now()
+            - timedelta(days=30),  # Use timedelta from datetime
         )
 
         cal = Calendar()
@@ -225,4 +259,12 @@ class SchoolCalendarExportView(APIView):
 
         response = HttpResponse(cal.to_ical(), content_type="text/calendar")
         response["Content-Disposition"] = 'attachment; filename="school_calendar.ics"'
+
+        # Add logging
+        log_action(
+            user=request.user,
+            action="Exported school calendar as iCal",
+            category=ActionCategory.DOWNLOAD,
+            metadata={"event_count": events.count(), "format": "ical"},
+        )
         return response

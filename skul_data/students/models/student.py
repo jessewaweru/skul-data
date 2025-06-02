@@ -128,22 +128,6 @@ class Student(models.Model):
         self.status = StudentStatus.GRADUATED
         self.save()
 
-    # def deactivate(self, reason):
-    #     """Soft delete student with a reason"""
-    #     self.is_active = False
-    #     self.status = StudentStatus.LEFT
-    #     self.deleted_at = timezone.now()
-    #     self.deletion_reason = reason
-    #     self.save()
-
-    #     StudentStatusChange.objects.create(
-    #         student=self,
-    #         from_status=StudentStatus.ACTIVE,
-    #         to_status=StudentStatus.LEFT,
-    #         reason=reason,
-    #         changed_by=self.teacher.user if self.teacher else None,
-    #     )
-
     def deactivate(self, reason="No reason provided", user=None):
         """Soft delete student with reason"""
         old_status = self.status  # Store the old status
