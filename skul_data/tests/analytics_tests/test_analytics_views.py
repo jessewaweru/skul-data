@@ -1,5 +1,5 @@
 from django.urls import reverse
-from rest_framework.test import APIClient
+from rest_framework.test import APIClient, APITestCase
 from django.test import TestCase
 from django.test import TransactionTestCase
 from rest_framework import status
@@ -34,6 +34,7 @@ from skul_data.reports.models.report import GeneratedReport
 from skul_data.reports.models.academic_record import AcademicRecord
 from skul_data.analytics.models.analytics import AnalyticsAlert
 from django.contrib.auth import get_user_model
+from skul_data.action_logs.models.action_log import ActionLog
 
 User = get_user_model()
 
@@ -314,6 +315,254 @@ class AnalyticsAlertViewSetTest(TestCase):
         # Check we got at least one performance alert
         self.assertGreaterEqual(len(response.data), 1)
         self.assertEqual(response.data[0]["alert_type"], "PERFORMANCE")
+
+
+class AnalyticsAlertLoggingTests(APITestCase):
+    def setUp(self):
+        # Create test data
+        self.school, self.admin = create_test_school()
+        self.client.force_authenticate(user=self.admin)
+
+        # Create test alerts
+        self.alert1 = create_test_alert(self.school, title="Test Alert 1")
+        self.alert2 = create_test_alert(
+            self.school, title="Test Alert 2", alert_type="PERFORMANCE"
+        )
+        self.alert3 = create_test_alert(self.school, title="Test Alert 3")
+
+        # Clear any existing logs from setup
+        ActionLog.objects.all().delete()
+
+    def test_mark_read_logs_action(self):
+        url = reverse("analytics-alert-mark-read", args=[self.alert1.id])
+
+        # Get initial state
+        initial_status = self.alert1.is_read
+
+        # Clear any logs that might exist before the test action
+        ActionLog.objects.all().delete()
+
+        response = self.client.post(url)
+
+        # Verify response
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Verify alert was updated
+        self.alert1.refresh_from_db()
+        self.assertTrue(self.alert1.is_read)
+
+        # Verify log was created - filter for the specific action we expect
+        logs = ActionLog.objects.filter(action__icontains="Marked alert as read")
+        self.assertEqual(logs.count(), 1)
+
+        log = logs.first()
+        self.assertEqual(log.user, self.admin)
+        self.assertEqual(log.category, "UPDATE")
+        self.assertEqual(log.action, f"Marked alert as read: {self.alert1.title}")
+        self.assertEqual(log.content_object, self.alert1)
+        self.assertEqual(log.metadata["previous_status"], initial_status)
+
+    def test_mark_all_read_logs_action_without_filters(self):
+        url = reverse("analytics-alert-mark-all-read")
+
+        # Get initial counts
+        initial_unread_count = AnalyticsAlert.objects.filter(is_read=False).count()
+
+        # Clear any logs that might exist before the test action
+        ActionLog.objects.all().delete()
+
+        response = self.client.post(url)
+
+        # Verify response
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], initial_unread_count)
+
+        # Verify all alerts were updated
+        self.assertEqual(AnalyticsAlert.objects.filter(is_read=False).count(), 0)
+
+        # Verify log was created - filter for the specific action
+        logs = ActionLog.objects.filter(action="Marked all alerts as read")
+        self.assertEqual(logs.count(), 1)
+
+        log = logs.first()
+        self.assertEqual(log.user, self.admin)
+        self.assertEqual(log.category, "UPDATE")
+        self.assertEqual(log.action, "Marked all alerts as read")
+
+        # Verify metadata
+        self.assertEqual(log.metadata["total_alerts"], initial_unread_count)
+        self.assertEqual(log.metadata["updated_count"], initial_unread_count)
+        self.assertEqual(
+            len(log.metadata["sample_alert_ids"]), min(initial_unread_count, 5)
+        )
+        self.assertEqual(log.metadata["filter_criteria"]["alert_type"], None)
+        self.assertEqual(log.metadata["filter_criteria"]["is_read"], None)
+        self.assertEqual(log.metadata["filter_criteria"]["school"], str(self.school.id))
+
+    def test_mark_all_read_logs_action_with_filters(self):
+        # Create some read alerts that shouldn't be affected
+        read_alert = create_test_alert(self.school, title="Read Alert", is_read=True)
+
+        url = reverse("analytics-alert-mark-all-read") + "?alert_type=PERFORMANCE"
+
+        # Get initial counts
+        initial_performance_count = AnalyticsAlert.objects.filter(
+            is_read=False, alert_type="PERFORMANCE"
+        ).count()
+
+        # Clear any logs that might exist before the test action
+        ActionLog.objects.all().delete()
+
+        response = self.client.post(url)
+
+        # Verify response
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], initial_performance_count)
+
+        # Verify only performance alerts were updated
+        self.assertEqual(
+            AnalyticsAlert.objects.filter(
+                is_read=False, alert_type="PERFORMANCE"
+            ).count(),
+            0,
+        )
+        # Other alerts should remain unread
+        self.assertGreater(
+            AnalyticsAlert.objects.filter(is_read=False)
+            .exclude(alert_type="PERFORMANCE")
+            .count(),
+            0,
+        )
+
+        # Verify log was created - filter for the specific action
+        logs = ActionLog.objects.filter(action="Marked all alerts as read")
+        self.assertEqual(logs.count(), 1)
+
+        log = logs.first()
+        self.assertEqual(log.metadata["total_alerts"], initial_performance_count)
+        self.assertEqual(log.metadata["updated_count"], initial_performance_count)
+        self.assertEqual(log.metadata["filter_criteria"]["alert_type"], "PERFORMANCE")
+
+    def test_mark_all_read_logs_empty_queryset(self):
+        # Mark all alerts as read first
+        AnalyticsAlert.objects.update(is_read=True)
+
+        # Clear any logs that might exist before the test action
+        ActionLog.objects.all().delete()
+
+        url = reverse("analytics-alert-mark-all-read")
+
+        response = self.client.post(url)
+
+        # Verify response
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # FIX: The response count should be 0 since no alerts were updated
+        self.assertEqual(response.data["count"], 0)
+
+        # Verify log was still created with zero counts - filter for specific action
+        logs = ActionLog.objects.filter(action="Marked all alerts as read")
+        self.assertEqual(logs.count(), 1)
+
+        log = logs.first()
+        self.assertEqual(log.metadata["total_alerts"], 0)
+        self.assertEqual(log.metadata["updated_count"], 0)
+        self.assertEqual(log.metadata["sample_alert_ids"], [])
+
+    def test_non_admin_cannot_mark_read(self):
+        # Clear logs before creating the teacher user
+        ActionLog.objects.all().delete()
+        print(f"[TEST DEBUG] Cleared logs. Count: {ActionLog.objects.count()}")
+
+        # Create and authenticate as non-admin user
+        teacher_user = User.objects.create_user(
+            email="teacher@test.com",
+            username="teacher",
+            password="testpass",
+            user_type=User.TEACHER,
+        )
+        print(
+            f"[TEST DEBUG] Created teacher user: {teacher_user} (type: {teacher_user.user_type})"
+        )
+        print(f"[TEST DEBUG] Teacher is_staff: {teacher_user.is_staff}")
+
+        # Clear logs again after user creation (in case user creation triggers signals)
+        ActionLog.objects.all().delete()
+        print(
+            f"[TEST DEBUG] Cleared logs after user creation. Count: {ActionLog.objects.count()}"
+        )
+
+        self.client.force_authenticate(user=teacher_user)
+        print(f"[TEST DEBUG] Authenticated as teacher")
+
+        url = reverse("analytics-alert-mark-read", args=[self.alert1.id])
+        print(f"[TEST DEBUG] About to make POST request to: {url}")
+
+        response = self.client.post(url)
+        print(f"[TEST DEBUG] Response status: {response.status_code}")
+        print(
+            f"[TEST DEBUG] Response data: {response.data if hasattr(response, 'data') else 'No data'}"
+        )
+
+        final_count = ActionLog.objects.count()
+        print(f"[TEST DEBUG] Final ActionLog count: {final_count}")
+
+        if final_count > 0:
+            logs = ActionLog.objects.all()
+            for log in logs:
+                print(f"[TEST DEBUG] Log: {log.user} - {log.action} - {log.category}")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Should be no logs since the action was forbidden
+        self.assertEqual(ActionLog.objects.count(), 0)
+
+    def test_non_admin_cannot_mark_all_read(self):
+        # Clear logs before creating the teacher user
+        ActionLog.objects.all().delete()
+        print(f"[TEST DEBUG] Cleared logs. Count: {ActionLog.objects.count()}")
+
+        # Create and authenticate as non-admin user
+        teacher_user = User.objects.create_user(
+            email="teacher2@test.com",  # Different email to avoid conflicts
+            username="teacher2",  # Different username to avoid conflicts
+            password="testpass",
+            user_type=User.TEACHER,
+        )
+        print(
+            f"[TEST DEBUG] Created teacher user: {teacher_user} (type: {teacher_user.user_type})"
+        )
+        print(f"[TEST DEBUG] Teacher is_staff: {teacher_user.is_staff}")
+
+        # Clear logs again after user creation (in case user creation triggers signals)
+        ActionLog.objects.all().delete()
+        print(
+            f"[TEST DEBUG] Cleared logs after user creation. Count: {ActionLog.objects.count()}"
+        )
+
+        self.client.force_authenticate(user=teacher_user)
+        print(f"[TEST DEBUG] Authenticated as teacher")
+
+        url = reverse("analytics-alert-mark-all-read")
+        print(f"[TEST DEBUG] About to make POST request to: {url}")
+
+        response = self.client.post(url)
+        print(f"[TEST DEBUG] Response status: {response.status_code}")
+        print(
+            f"[TEST DEBUG] Response data: {response.data if hasattr(response, 'data') else 'No data'}"
+        )
+
+        final_count = ActionLog.objects.count()
+        print(f"[TEST DEBUG] Final ActionLog count: {final_count}")
+
+        if final_count > 0:
+            logs = ActionLog.objects.all()
+            for log in logs:
+                print(f"[TEST DEBUG] Log: {log.user} - {log.action} - {log.category}")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Should be no logs since the action was forbidden
+        self.assertEqual(ActionLog.objects.count(), 0)
 
 
 # python manage.py test skul_data.tests.analytics_tests.test_analytics_views

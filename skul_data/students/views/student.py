@@ -84,38 +84,6 @@ class StudentViewSet(viewsets.ModelViewSet):
             return [IsAdministrator()]
         return [IsAuthenticated()]
 
-    # def get_queryset(self):
-    #     queryset = super().get_queryset()
-    #     user = self.request.user
-
-    #     if user.user_type == User.SCHOOL_ADMIN:
-    #         return queryset
-
-    #     school = getattr(user, "school", None)
-    #     if not school:
-    #         return Student.objects.none()
-
-    #     queryset = queryset.filter(school=school)
-
-    #     # Only show active students by default
-    #     if not self.request.query_params.get("show_inactive"):
-    #         queryset = queryset.filter(is_active=True)
-
-    #     # Teachers only see students in their classes
-    #     if user.user_type == "teacher":
-    #         return queryset.filter(
-    #             Q(teacher=user.teacher_profile)
-    #             | Q(student_class__class_teacher=user.teacher_profile)
-    #         )
-
-    #     # Parents only see their own children
-    #     elif user.user_type == "parent":
-    #         return queryset.filter(
-    #             Q(parent=user.parent_profile) | Q(guardians=user.parent_profile)
-    #         ).distinct()
-
-    #     return queryset
-
     def get_queryset(self):
         queryset = super().get_queryset()
         user = self.request.user

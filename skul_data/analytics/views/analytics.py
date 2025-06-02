@@ -66,6 +66,11 @@ from skul_data.analytics.utils.analytics_generator import (
     get_response_times,
     get_performance_per_teacher,
 )
+from skul_data.action_logs.utils.action_log import log_action
+from skul_data.action_logs.models.action_log import ActionCategory
+from skul_data.action_logs.models.action_log import ActionLog
+from rest_framework import status
+from skul_data.users.models.base_user import User
 
 
 class AnalyticsViewSet(viewsets.ViewSet):
@@ -295,12 +300,50 @@ class AnalyticsAlertViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def mark_read(self, request, pk=None):
         alert = self.get_object()
+        previous_status = alert.is_read
+
+        # Perform the update
         alert.is_read = True
         alert.save()
+
+        # Log the action
+        log_action(
+            user=request.user,
+            action=f"Marked alert as read: {alert.title}",
+            category=ActionCategory.UPDATE,
+            obj=alert,
+            metadata={"previous_status": previous_status},
+        )
+
         return Response({"status": "marked as read"})
 
     @action(detail=False, methods=["post"])
     def mark_all_read(self, request):
-        queryset = self.filter_queryset(self.get_queryset())
-        queryset.update(is_read=True)
-        return Response({"status": "all alerts marked as read"})
+        # Get the filtered queryset - only unread alerts
+        queryset = self.filter_queryset(self.get_queryset()).filter(is_read=False)
+
+        # Get counts and sample IDs for logging
+        alert_count = queryset.count()
+        sample_ids = list(queryset.values_list("id", flat=True)[:5])
+
+        # Perform the bulk update
+        updated_count = queryset.update(is_read=True)
+
+        # Log the bulk action
+        log_action(
+            user=request.user,
+            action="Marked all alerts as read",
+            category=ActionCategory.UPDATE,
+            metadata={
+                "total_alerts": alert_count,
+                "updated_count": updated_count,
+                "sample_alert_ids": sample_ids,
+                "filter_criteria": {
+                    "alert_type": request.query_params.get("alert_type"),
+                    "is_read": request.query_params.get("is_read"),
+                    "school": str(request.user.administered_school.id),
+                },
+            },
+        )
+
+        return Response({"status": "all alerts marked as read", "count": updated_count})
