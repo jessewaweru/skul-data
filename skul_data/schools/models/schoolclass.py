@@ -3,6 +3,9 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from django.core.exceptions import ValidationError
 from skul_data.schools.models.school import School
 from skul_data.schools.models.schoolstream import SchoolStream
+from skul_data.users.models import User
+from skul_data.action_logs.utils.action_log import log_action
+from skul_data.action_logs.models.action_log import ActionCategory
 
 
 class SchoolClass(models.Model):
@@ -109,6 +112,20 @@ class SchoolClass(models.Model):
         # Copy subjects to new class
         new_class.subjects.set(self.subjects.all())
 
+        # Log the promotion
+        user = getattr(self, "_current_user", None) or User.get_current_user()
+        if user:
+            log_action(
+                user=user,
+                action=f"Promoted class {self.name} to {new_academic_year}",
+                category=ActionCategory.UPDATE,
+                obj=self,
+                metadata={
+                    "new_class_id": new_class.id,
+                    "new_academic_year": new_academic_year,
+                },
+            )
+
         return new_class
 
     def clean(self):
@@ -207,11 +224,76 @@ class ClassAttendance(models.Model):
         unique_together = ("school_class", "date")
         ordering = ["-date"]
 
+    # def save(self, *args, **kwargs):
+    #     """Automatically capture student count when creating new attendance"""
+    #     if not self.pk:  # Only on initial creation
+    #         self.total_students = self.school_class.students.count()
+    #     super().save(*args, **kwargs)
+
     def save(self, *args, **kwargs):
         """Automatically capture student count when creating new attendance"""
         if not self.pk:  # Only on initial creation
             self.total_students = self.school_class.students.count()
+
+            # Log attendance creation
+            user = getattr(self, "_current_user", None) or User.get_current_user()
+            if user:
+                log_action(
+                    user=user,
+                    action=f"Created attendance for {self.school_class} on {self.date}",
+                    category=ActionCategory.CREATE,
+                    obj=self,
+                    metadata={
+                        "total_students": self.total_students,
+                        "class_id": self.school_class.id,
+                    },
+                )
         super().save(*args, **kwargs)
+
+    def update_attendance(self, student_ids, user=None):
+        from skul_data.schools.signals.schoolclass import log_attendance_changes
+
+        """
+        Special method for updating attendance that handles bulk operations
+        and optimized logging
+        """
+        from django.db.models.signals import m2m_changed
+
+        current_present = set(self.present_students.values_list("id", flat=True))
+        new_present = set(student_ids)
+
+        added = new_present - current_present
+        removed = current_present - new_present
+
+        # Temporarily disconnect the M2M signal to prevent duplicate logging
+        m2m_changed.disconnect(
+            log_attendance_changes, sender=ClassAttendance.present_students.through
+        )
+
+        try:
+            # Perform the update
+            self.present_students.set(student_ids)
+
+            # Create just one log entry
+            if user:
+                log_action(
+                    user=user,
+                    action=f"Updated attendance for {self.school_class} on {self.date}",
+                    category=ActionCategory.UPDATE,
+                    obj=self,
+                    metadata={
+                        "students_added": list(added),
+                        "students_removed": list(removed),
+                        "total_present": len(new_present),
+                        "attendance_rate": self.attendance_rate,
+                        "class_id": self.school_class.id,
+                    },
+                )
+        finally:
+            # Reconnect the signal
+            m2m_changed.connect(
+                log_attendance_changes, sender=ClassAttendance.present_students.through
+            )
 
     def __str__(self):
         return f"Attendance for {self.school_class} on {self.date}"

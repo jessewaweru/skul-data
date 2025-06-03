@@ -109,6 +109,16 @@ class HasRolePermission(BasePermission):
         if user.is_staff or user.user_type == User.SCHOOL_ADMIN:
             return True
 
+        # ADDED: Special handling for attendance marking by teachers
+        if (
+            hasattr(view, "action")
+            and view.action == "mark_attendance"
+            and user.user_type == User.TEACHER
+        ):
+            # Teachers can mark attendance for their own classes
+            # The object-level check will verify they own the class
+            return True
+
         # Allow parents to view their own profile
         if request.method == "GET" and view.action == "retrieve":
             if user.user_type == User.PARENT:
@@ -189,6 +199,16 @@ class HasRolePermission(BasePermission):
         if request.user.is_staff or request.user.user_type == User.SCHOOL_ADMIN:
             return True
 
+        # ADDED: For attendance objects, check if teacher owns the class
+        if (
+            hasattr(view, "action")
+            and view.action == "mark_attendance"
+            and request.user.user_type == User.TEACHER
+        ):
+            # Check if this teacher is assigned to the class
+            if hasattr(obj, "school_class"):
+                return obj.school_class.class_teacher == request.user.teacher_profile
+
         # Primary school admin check
         if (
             hasattr(request.user, "school_admin_profile")
@@ -211,6 +231,9 @@ class HasRolePermission(BasePermission):
         # For teachers, they should only be able to view their own profile
         if request.user.user_type == User.TEACHER:
             return False  # If they got here, it's not their profile
+
+        # if request.user.user_type == User.TEACHER:
+        #     return self.has_permission(request, view)
 
         return has_general_permission
 

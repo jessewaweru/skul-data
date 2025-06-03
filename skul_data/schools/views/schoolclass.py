@@ -26,6 +26,8 @@ from skul_data.students.models.student import Student
 from django.db.models import Q
 from rest_framework.exceptions import PermissionDenied
 from skul_data.users.models.school_admin import SchoolAdmin
+from skul_data.action_logs.utils.action_log import log_action
+from skul_data.action_logs.models.action_log import ActionCategory
 
 
 class SchoolClassViewSet(viewsets.ModelViewSet):
@@ -98,6 +100,23 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
 
         return queryset
 
+    def perform_create(self, serializer):
+        """Override to add logging for class creation"""
+        school_class = serializer.save()
+
+        # Log the class creation
+        log_action(
+            user=self.request.user,
+            action="Created class",
+            category=ActionCategory.CREATE,
+            obj=school_class,
+            metadata={
+                "class_name": school_class.name,
+                "grade_level": school_class.grade_level,
+                "school": str(school_class.school),
+            },
+        )
+
     @action(detail=True, methods=["post"])
     def promote(self, request, pk=None):
         """Promote class to next academic year"""
@@ -109,6 +128,20 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
             new_class = class_instance.promote_class(
                 serializer.validated_data["new_academic_year"]
             )
+
+            # Log the class promotion
+            log_action(
+                user=request.user,
+                action="Promoted class",
+                category=ActionCategory.UPDATE,
+                obj=class_instance,
+                metadata={
+                    "new_academic_year": serializer.validated_data["new_academic_year"],
+                    "original_year": class_instance.academic_year,
+                    "new_class_id": new_class.id,
+                },
+            )
+
             return Response(
                 SchoolClassSerializer(new_class).data, status=status.HTTP_201_CREATED
             )
@@ -132,8 +165,23 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
             )  # or wherever your Teacher model is
 
             teacher = Teacher.objects.get(id=teacher_id, school=class_instance.school)
+            old_teacher = class_instance.class_teacher
             class_instance.class_teacher = teacher
             class_instance.save()
+
+            # Log the teacher assignment
+            log_action(
+                user=request.user,
+                action="Assigned teacher to class",
+                category=ActionCategory.UPDATE,
+                obj=class_instance,
+                metadata={
+                    "fields_changed": ["class_teacher"],
+                    "new_teacher": str(teacher),
+                    "old_teacher": str(old_teacher) if old_teacher else None,
+                },
+            )
+
             return Response(
                 SchoolClassSerializer(class_instance).data, status=status.HTTP_200_OK
             )
@@ -145,6 +193,15 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"])
     def analytics(self, request):
         """Class analytics for dashboard"""
+        # Log the analytics view
+        # Log the analytics view
+        log_action(
+            user=request.user,
+            action="Viewed class analytics",
+            category=ActionCategory.VIEW,
+            metadata={"path": request.path, "query_params": dict(request.GET)},
+        )
+
         queryset = self.filter_queryset(self.get_queryset())
 
         # Basic counts
@@ -182,8 +239,6 @@ class ClassTimetableViewSet(viewsets.ModelViewSet):
     serializer_class = ClassTimetableSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["school_class", "is_active"]
-
-    # Fix: Don't override permission_classes twice - remove one
     permission_classes = [IsAuthenticated, HasRolePermission]
 
     # Set specific permissions
@@ -278,10 +333,16 @@ class ClassDocumentViewSet(viewsets.ModelViewSet):
 class ClassAttendanceViewSet(viewsets.ModelViewSet):
     queryset = ClassAttendance.objects.all()
     serializer_class = ClassAttendanceSerializer
-    permission_classes = [IsAdministrator | IsTeacher]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["school_class", "date", "taken_by"]
-    permission_classes = [IsAuthenticated, HasRolePermission]
+    # permission_classes = [IsAuthenticated, HasRolePermission]
+
+    # UPDATED PERMISSIONS:
+    def get_permissions(self):
+        if self.action == "mark_attendance":
+            # Allow teachers to mark attendance for their classes
+            return [IsAuthenticated(), HasRolePermission()]
+        return [IsAuthenticated(), HasRolePermission()]
 
     # Set specific permissions
     required_permission_get = "view_attendance"
@@ -302,7 +363,14 @@ class ClassAttendanceViewSet(viewsets.ModelViewSet):
 
         queryset = queryset.filter(school_class__school=school)
 
-        if user.user_type == "teacher":
+        # if user.user_type == "teacher":
+        #     return queryset.filter(
+        #         models.Q(school_class__class_teacher=user.teacher_profile)
+        #         | models.Q(taken_by=user)
+        #     )
+
+        if user.user_type == User.TEACHER:
+            # UPDATED: Allow teachers to see attendance for their classes
             return queryset.filter(
                 models.Q(school_class__class_teacher=user.teacher_profile)
                 | models.Q(taken_by=user)
@@ -325,32 +393,36 @@ class ClassAttendanceViewSet(viewsets.ModelViewSet):
 
         serializer.save(taken_by=user)
 
-    required_permission_post = "manage_attendance"
-
     @action(detail=True, methods=["post"])
     def mark_attendance(self, request, pk=None):
         attendance = self.get_object()
         student_ids = request.data.get("student_ids", [])
 
-        if not student_ids:
-            return Response(
-                {"error": "student_ids is required"}, status=status.HTTP_400_BAD_REQUEST
+        # ADDED: Check if teacher can mark attendance for this class
+        if (
+            request.user.user_type == User.TEACHER
+            and attendance.school_class.class_teacher != request.user.teacher_profile
+        ):
+            raise PermissionDenied(
+                "You can only mark attendance for your assigned classes"
             )
 
         try:
-            # Use student_class instead of school_class
-            students = Student.objects.filter(
-                id__in=student_ids,
-                student_class=attendance.school_class,  # Changed to student_class
+            attendance._current_user = request.user
+            attendance.update_attendance(student_ids, user=request.user)
+
+            # Log the action
+            log_action(
+                user=request.user,
+                action="Marked attendance",
+                category=ActionCategory.UPDATE,
+                obj=attendance,
+                metadata={
+                    "total_present": len(student_ids),
+                    "student_ids": student_ids,
+                },
             )
 
-            if not students.exists():
-                return Response(
-                    {"error": "No students found for this class"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            attendance.present_students.set(students)
             return Response(
                 ClassAttendanceSerializer(attendance).data, status=status.HTTP_200_OK
             )

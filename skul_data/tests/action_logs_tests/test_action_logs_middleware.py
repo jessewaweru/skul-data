@@ -7,6 +7,9 @@ from skul_data.tests.action_logs_tests.test_helpers import (
     create_test_school,
 )
 from skul_data.action_logs.models.action_log import ActionCategory
+from skul_data.schools.models.schoolclass import SchoolClass
+from django.core.files.uploadedfile import SimpleUploadedFile
+from skul_data.tests.classes_tests.test_helpers import assert_log_exists
 
 
 class ActionLogMiddlewareTest(TestCase):
@@ -145,6 +148,108 @@ class EnhancedActionLogMiddlewareTest(TestCase):
         self.assertTrue(log.metadata.get("document_operation"))
         self.assertEqual(log.metadata["path"], "/api/documents/share/download/abc123/")
         self.assertIn("token", log.metadata)
+
+
+class ActionLogMiddlewareTimeTableTest(TestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.middleware = ActionLogMiddleware(lambda r: None)
+        self.school, self.admin = create_test_school()
+        self.admin.save()  # Ensure admin user is saved
+        self.school_class = SchoolClass.objects.create(
+            name="Grade 1",
+            grade_level="Grade 1",
+            school=self.school,
+            academic_year="2023-2024",
+        )
+
+    def test_timetable_upload_logging(self):
+        # Create file content with proper boundary
+        file_content = SimpleUploadedFile(
+            "test.pdf",
+            b"%PDF-1.4\n...actual PDF content...",  # Mimic real PDF content
+            content_type="application/pdf",
+        )
+
+        # Create the request properly with format=multipart
+        request = self.factory.post(
+            "/api/timetables/",
+            {
+                "school_class": str(self.school_class.id),
+                "description": "Test",
+                "file": file_content,
+            },
+            format="multipart",  # This ensures proper boundary generation
+        )
+        request.user = self.admin
+
+        # Clear any existing logs
+        ActionLog.objects.all().delete()
+
+        # Create a proper mock response
+        mock_response = type(
+            "MockResponse",
+            (),
+            {"status_code": 200, "headers": {}, "content": b"Test response"},
+        )
+
+        # Initialize middleware with our mock response
+        middleware = ActionLogMiddleware(lambda r: mock_response)
+
+        # Process the request
+        middleware(request)
+
+        # Verify log was created
+        log = ActionLog.objects.filter(
+            user=self.admin,
+            action="POST /api/timetables/",
+            category=ActionCategory.CREATE.value,
+        ).first()
+
+        self.assertIsNotNone(log, "Timetable upload log not found")
+        self.assertEqual(log.metadata.get("timetable_operation"), True)
+
+        # Check file type (either extension or content type)
+        file_type = log.metadata.get("file_type")
+        self.assertTrue(
+            file_type in ["pdf", "application/pdf"],
+            f"Expected file_type to be 'pdf' or 'application/pdf', got {file_type}",
+        )
+
+    def test_timetable_download_logging(self):
+        request = self.factory.get("/api/timetables/1/download/")
+        request.user = self.admin
+
+        # Mock a response with Content-Disposition header
+        response = type(
+            "Response",
+            (),
+            {
+                "status_code": 200,
+                "headers": {
+                    "Content-Disposition": 'attachment; filename="timetable.pdf"'
+                },
+            },
+        )
+
+        middleware = ActionLogMiddleware(lambda r: response)
+
+        # Clear any existing logs
+        ActionLog.objects.all().delete()
+
+        middleware(request)
+
+        # Verify log was created
+        log = ActionLog.objects.filter(
+            user=self.admin,
+            action="GET /api/timetables/1/download/",
+            category=ActionCategory.VIEW.value,
+        ).first()
+
+        self.assertIsNotNone(log, "Timetable download log not found")
+        self.assertEqual(log.metadata.get("timetable_operation"), True)
+        self.assertEqual(log.metadata.get("file_download"), True)
+        self.assertEqual(log.metadata.get("downloaded_filename"), "timetable.pdf")
 
 
 # python manage.py test skul_data.tests.action_logs_tests.test_action_logs_middleware
