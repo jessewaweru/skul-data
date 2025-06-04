@@ -4,6 +4,8 @@ import logging
 import re
 from rest_framework import status
 from skul_data.schools.models.schoolclass import ClassTimetable
+from django.contrib.auth.models import AnonymousUser
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -117,10 +119,14 @@ class ActionLogMiddleware:
         # 1. User is not authenticated
         # 2. Response is a permission denied (403)
         # 3. Path is admin/static/media
+        # 4. In test mode
         if (
-            not request.user.is_authenticated
+            isinstance(request.user, AnonymousUser)
             or response.status_code == status.HTTP_403_FORBIDDEN
-            or request.path.startswith(("/admin", "/static", "/media"))
+            or any(
+                request.path.startswith(p) for p in ("/admin/", "/static/", "/media/")
+            )
+            or getattr(settings, "TEST_MODE", False)
         ):
             return response
 

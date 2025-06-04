@@ -13,14 +13,22 @@ from skul_data.tests.classes_tests.test_helpers import assert_log_exists
 
 
 class ActionLogMiddlewareTest(TestCase):
+    """Tests for the ActionLogMiddleware that logs user actions."""
+
     def setUp(self):
         self.factory = RequestFactory()
         self.school, self.admin_user = create_test_school()
 
-        # Create a simple response function that returns a HttpResponse
+        # Clear any existing logs
+        ActionLog.objects.all().delete()
+
+        # Create a simple response function
         self.simple_response = lambda r: HttpResponse(status=200)
 
     def test_middleware_with_authenticated_user(self):
+        # Clear logs before test
+        ActionLog.objects.all().delete()
+
         request = self.factory.get("/some-path/")
         request.user = self.admin_user
         request.META = {"HTTP_USER_AGENT": "TestAgent/1.0", "REMOTE_ADDR": "127.0.0.1"}
@@ -39,6 +47,9 @@ class ActionLogMiddlewareTest(TestCase):
         self.assertEqual(log.user_agent, "TestAgent/1.0")
 
     def test_middleware_with_anonymous_user(self):
+        # Clear logs before test
+        ActionLog.objects.all().delete()
+
         request = self.factory.get("/some-path/")
         request.user = AnonymousUser()
 
@@ -48,6 +59,9 @@ class ActionLogMiddlewareTest(TestCase):
         self.assertEqual(ActionLog.objects.count(), 0)
 
     def test_middleware_skips_admin_paths(self):
+        # Clear logs before test
+        ActionLog.objects.all().delete()
+
         request = self.factory.get("/admin/")
         request.user = self.admin_user
         request.META = {"HTTP_USER_AGENT": "TestAgent/1.0", "REMOTE_ADDR": "127.0.0.1"}
