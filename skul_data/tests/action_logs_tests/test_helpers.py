@@ -55,6 +55,8 @@ def create_test_action_log(
 
 
 def create_test_school(name=None):
+    """Create test school with proper transaction management"""
+
     if name is None:
         unique_id = uuid.uuid4().hex[:6]
         name = f"Test School {unique_id}"
@@ -63,43 +65,60 @@ def create_test_school(name=None):
     base_username = f"admin_{name.lower().replace(' ', '_')}"
     username = f"{base_username}_{uuid.uuid4().hex[:4]}"
 
-    admin_user = User.objects.create_user(
-        email=f"admin_{uuid.uuid4().hex[:6]}@test.com",
-        username=username,
-        password="testpass",
-        user_type=User.SCHOOL_ADMIN,
-        is_staff=True,
-        first_name="Test",  # Ensure these are set
-        last_name="Admin",
-    )
+    # Use atomic transaction to ensure proper order
+    from django.db import transaction
 
-    # Rest of your function remains the same...
-    random_suffix = random.randint(1000, 9999)
-    unique_code = f"{name.replace(' ', '')[0:3].upper()}{random_suffix}"
+    with transaction.atomic():
+        # Create and save the user first
+        admin_user = User.objects.create_user(
+            email=f"admin_{uuid.uuid4().hex[:6]}@test.com",
+            username=username,
+            password="testpass",
+            user_type=User.SCHOOL_ADMIN,
+            is_staff=True,
+            first_name="Test",
+            last_name="Admin",
+        )
 
-    school = School.objects.create(
-        name=name,
-        email=f"contact_{uuid.uuid4().hex[:4]}@test.com",
-        schooladmin=admin_user,
-        code=unique_code,
-        term_start_date=timezone.now().date() - timedelta(days=30),
-        term_end_date=timezone.now().date() + timedelta(days=30),
-        current_term="term_1",
-        current_school_year="2023",
-    )
+        # Create the school
+        random_suffix = random.randint(1000, 9999)
+        unique_code = f"{name.replace(' ', '')[0:3].upper()}{random_suffix}"
 
-    # Create admin role with permissions
-    admin_role = Role.objects.create(name="Admin", school=school, role_type="SYSTEM")
-    permissions = [
-        ("view_analytics", "Can view analytics"),
-        ("manage_analytics", "Can manage analytics"),
-    ]
-    for code, name in permissions:
-        perm, _ = Permission.objects.get_or_create(code=code, name=name)
-        admin_role.permissions.add(perm)
+        school = School.objects.create(
+            name=name,
+            email=f"contact_{uuid.uuid4().hex[:4]}@test.com",
+            schooladmin=admin_user,
+            code=unique_code,
+            term_start_date=timezone.now().date() - timedelta(days=30),
+            term_end_date=timezone.now().date() + timedelta(days=30),
+            current_term="term_1",
+            current_school_year="2023",
+        )
 
-    admin_user.role = admin_role
-    admin_user.save()
+        # Set current user context WITHIN the transaction
+        User.set_current_user(admin_user)
+
+        # Create admin role - this will trigger signals but user is guaranteed to exist
+        admin_role = Role.objects.create(
+            name="Admin", school=school, role_type="SYSTEM"
+        )
+
+        # Create permissions
+        permissions = [
+            ("view_analytics", "Can view analytics"),
+            ("manage_analytics", "Can manage analytics"),
+        ]
+        for code, name in permissions:
+            perm, _ = Permission.objects.get_or_create(code=code, name=name)
+            admin_role.permissions.add(perm)
+
+        # Update user with role
+        admin_user.role = admin_role
+        admin_user.save()
+
+    # Refresh from DB to ensure all changes are committed
+    admin_user.refresh_from_db()
+    school.refresh_from_db()
 
     return school, admin_user
 

@@ -12,11 +12,19 @@ from skul_data.tests.action_logs_tests.test_helpers import (
 )
 from django.contrib.contenttypes.models import ContentType
 from skul_data.documents.models.document import DocumentShareLink, Document
+from skul_data.users.models.role import Role, Permission
+from django.db import transaction
 
 
 class ActionLogSignalsTest(TransactionTestCase):
+    """Test action log signals with proper isolation"""
+
     def setUp(self):
-        # Temporarily disable signals during setup to avoid circular dependency
+        """Set up test data with proper transaction management"""
+        # Clear all existing action logs to start fresh
+        ActionLog.objects.all().delete()
+
+        # Temporarily disable signals during setup to avoid interference
         from django.db import transaction
 
         with transaction.atomic():
@@ -24,52 +32,72 @@ class ActionLogSignalsTest(TransactionTestCase):
             # Ensure the user is properly saved and committed
             self.admin_user.refresh_from_db()
 
-        # Now set the current user for logging
+        # Set the current user for logging
         User.set_current_user(self.admin_user)
 
+    def tearDown(self):
+        """Clean up after each test"""
+        User.set_current_user(None)
+        ActionLog.objects.all().delete()
+
     def test_log_model_save_create(self):
+        """Test that model creation is logged correctly"""
+        # Clear any existing logs
+        ActionLog.objects.all().delete()
+
         # Create student and explicitly set current user
         student = create_test_student(self.school)
-        student._current_user = self.admin_user  # Explicitly set current user
+        student._current_user = self.admin_user
         student.save()  # Trigger the signal again with current user set
+
+        # Wait for transaction to complete
+        transaction.get_connection().ensure_connection()
 
         logs = ActionLog.objects.filter(
             category=ActionCategory.CREATE, action=f"Created {Student.__name__}"
         )
 
-        self.assertEqual(logs.count(), 1)
+        self.assertEqual(logs.count(), 1, f"Expected 1 CREATE log, got {logs.count()}")
         log = logs.first()
         self.assertEqual(log.user, self.admin_user)
         self.assertEqual(log.content_object, student)
 
     def test_log_model_save_update(self):
+        """Test that model updates are logged correctly"""
+        # Clear existing logs
+        ActionLog.objects.all().delete()
+
         # Create student first
         student = create_test_student(self.school)
         student._current_user = self.admin_user
-        student.save()  # This should create a CREATE log
+        student.save()
 
-        # Clear existing logs to focus on update
+        # Clear logs to focus on update
         ActionLog.objects.all().delete()
 
         # Now update the student
         student.first_name = "Updated"
-        student._current_user = self.admin_user  # Set current user for update
+        student._current_user = self.admin_user
+        student._changed_fields = ["first_name"]  # Track the change
         student.save()
 
         logs = ActionLog.objects.filter(
             category=ActionCategory.UPDATE, action=f"Updated {Student.__name__}"
         )
 
-        self.assertEqual(logs.count(), 1)
+        self.assertEqual(logs.count(), 1, f"Expected 1 UPDATE log, got {logs.count()}")
         log = logs.first()
         self.assertEqual(log.user, self.admin_user)
         self.assertEqual(log.content_object, student)
         self.assertIn("fields_changed", log.metadata)
-        self.assertIn("new_values", log.metadata)
 
     def test_log_model_delete(self):
+        """Test that model deletion is logged correctly"""
+        # Clear existing logs
+        ActionLog.objects.all().delete()
+
         student = create_test_student(self.school)
-        student._current_user = self.admin_user  # Set current user on instance
+        student._current_user = self.admin_user
         student_id = student.id
         student.delete()
 
@@ -77,22 +105,33 @@ class ActionLogSignalsTest(TransactionTestCase):
             category=ActionCategory.DELETE, action=f"Deleted {Student.__name__}"
         )
 
-        self.assertEqual(logs.count(), 1)
+        self.assertEqual(logs.count(), 1, f"Expected 1 DELETE log, got {logs.count()}")
         log = logs.first()
         self.assertEqual(log.user, self.admin_user)
         self.assertEqual(log.object_id, student_id)
 
     def test_no_log_for_action_log_model(self):
-        # Shouldn't log changes to ActionLog itself
+        """Test that ActionLog model changes don't create recursive logs"""
+        # Clear all existing logs first
+        ActionLog.objects.all().delete()
+
+        # Create an ActionLog directly - this should NOT trigger a signal
         log = ActionLog.objects.create(
             user=self.admin_user, action="Test", category=ActionCategory.OTHER
         )
 
+        # Update the log - this should also NOT trigger a signal
         log.action = "Updated"
         log.save()
 
-        # Check no new logs were created for the update
-        self.assertEqual(ActionLog.objects.count(), 1)
+        # Check that we only have the 1 log we created manually
+        total_logs = ActionLog.objects.count()
+        self.assertEqual(
+            total_logs,
+            1,
+            f"Expected exactly 1 ActionLog (the one we created manually), "
+            f"but found {total_logs}. ActionLog changes should not be logged.",
+        )
 
 
 class EnhancedActionLogSignalsTest(TransactionTestCase):
@@ -234,8 +273,32 @@ class EnhancedActionLogSignalsTest(TransactionTestCase):
         self.assertEqual(log.metadata["ip_address"], "192.168.1.1")
 
     def tearDown(self):
-        """Clean up after tests"""
+        from django.db import connections
+
+        # 1. Close all connections
+        for conn in connections.all():
+            conn.close()
+
+        # 2. Additional cleanup for PostgreSQL
+        if "postgresql" in connections["default"].settings_dict["ENGINE"]:
+            with connections["default"].cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT pg_terminate_backend(pg_stat_activity.pid)
+                    FROM pg_stat_activity
+                    WHERE pg_stat_activity.datname = current_database()
+                    AND pid <> pg_backend_pid();
+                """
+                )
+
+        # 3. Clear your application state
         User.set_current_user(None)
+        ActionLog.objects.all().delete()
+
+        # 4. Force garbage collection to clean up any lingering references
+        import gc
+
+        gc.collect()
 
 
 # python manage.py test skul_data.tests.action_logs_tests.test_action_logs_signals

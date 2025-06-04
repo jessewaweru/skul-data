@@ -129,31 +129,6 @@ class SessionViewSetTest(APITestCase):
 
 
 class ParentViewSetTest(APITestCase):
-    # def setUp(self):
-    #     self.school = SchoolFactory()
-    #     self.admin = SchoolAdminFactory(school=self.school)
-
-    #     # Add necessary permissions for the admin
-    #     self.role = RoleFactory(school=self.school)
-    #     self.admin.user.role = self.role
-
-    #     # Add manage_parents permission
-    #     permission = PermissionFactory(code="manage_parents")
-    #     self.role.permissions.add(permission)
-
-    #     self.admin.user.school = self.school
-    #     self.admin.user.save()
-
-    #     self.client.force_authenticate(user=self.admin.user)
-    #     self.parent = ParentFactory(school=self.school)
-    #     self.student = Student.objects.create(
-    #         first_name="John",
-    #         last_name="Doe",
-    #         date_of_birth="2000-01-01",
-    #         school=self.school,
-    #     )
-    #     self.url = reverse("parent-list")
-
     def setUp(self):
         self.school = SchoolFactory()
         self.admin = SchoolAdminFactory(school=self.school)
@@ -248,14 +223,6 @@ class ParentViewSetTest(APITestCase):
 
 
 class TeacherViewSetTest(APITestCase):
-    # def setUp(self):
-    #     self.school = SchoolFactory()
-    #     self.admin = SchoolAdminFactory(school=self.school)
-    #     self.client.force_authenticate(user=self.admin.user)
-    #     self.teacher = TeacherFactory(school=self.school)
-    #     self.subject = Subject.objects.create(name="Math", school=self.school)
-    #     self.url = reverse("teacher-list")
-
     def setUp(self):
         self.school = SchoolFactory()
         self.admin = SchoolAdminFactory(school=self.school)
@@ -294,11 +261,6 @@ class TeacherViewSetTest(APITestCase):
         self.teacher = TeacherFactory(school=self.school)
         self.subject = Subject.objects.create(name="Math", school=self.school)
         self.url = reverse("teacher-list")
-
-    # def test_list_teachers(self):
-    #     response = self.client.get(self.url)
-    #     self.assertEqual(response.status_code, status.HTTP_200_OK)
-    #     self.assertEqual(len(response.data["results"]), 1)
 
     def test_list_teachers(self):
         response = self.client.get(self.url)

@@ -26,6 +26,8 @@ class LogActionUtilityTest(TestCase):
         self.school, self.admin_user = create_test_school()
         # Enable test mode for action logging
         set_test_mode(True)
+        # Clear any action logs created during setup
+        ActionLog.objects.all().delete()
         print(
             f"[DEBUG] Test setUp completed, ActionLog count: {ActionLog.objects.count()}"
         )
@@ -37,7 +39,12 @@ class LogActionUtilityTest(TestCase):
         print(f"[DEBUG] Test tearDown completed")
 
     def test_log_action_with_object(self):
+        # Clear any existing logs
+        ActionLog.objects.all().delete()
+
         student = create_test_student(self.school)
+        # Clear logs created by student creation
+        ActionLog.objects.all().delete()
 
         log_action(
             user=self.admin_user,
@@ -46,6 +53,7 @@ class LogActionUtilityTest(TestCase):
             obj=student,
         )
 
+        self.assertEqual(ActionLog.objects.count(), 1)
         log = ActionLog.objects.first()
         self.assertEqual(log.user, self.admin_user)
         self.assertEqual(log.action, "Test action")
@@ -53,10 +61,14 @@ class LogActionUtilityTest(TestCase):
         self.assertEqual(log.content_object, student)
 
     def test_log_action_without_object(self):
+        # Clear any existing logs
+        ActionLog.objects.all().delete()
+
         log_action(
             user=self.admin_user, action="System action", category=ActionCategory.SYSTEM
         )
 
+        self.assertEqual(ActionLog.objects.count(), 1)
         log = ActionLog.objects.first()
         self.assertEqual(log.user, self.admin_user)
         self.assertEqual(log.action, "System action")
@@ -64,6 +76,9 @@ class LogActionUtilityTest(TestCase):
         self.assertIsNone(log.content_object)
 
     def test_log_action_with_metadata(self):
+        # Clear any existing logs
+        ActionLog.objects.all().delete()
+
         metadata = {"key": "value", "count": 42}
 
         log_action(
@@ -73,13 +88,18 @@ class LogActionUtilityTest(TestCase):
             metadata=metadata,
         )
 
+        self.assertEqual(ActionLog.objects.count(), 1)
         log = ActionLog.objects.first()
         self.assertEqual(log.metadata, metadata)
 
     def test_log_action_without_user(self):
+        # Clear any existing logs
+        ActionLog.objects.all().delete()
+
         system_tag = uuid.UUID("00000000-0000-0000-0000-000000000000")
         log_action(user=None, action="Anonymous action", category=ActionCategory.OTHER)
 
+        self.assertEqual(ActionLog.objects.count(), 1)
         log = ActionLog.objects.first()
         self.assertIsNone(log.user)
         self.assertEqual(log.action, "Anonymous action")
@@ -87,9 +107,17 @@ class LogActionUtilityTest(TestCase):
 
     def test_log_action_async_in_transaction(self):
         print(f"\n[DEBUG] === test_log_action_async_in_transaction started ===")
+
+        # Clear any existing logs at the start
+        ActionLog.objects.all().delete()
+
         student = create_test_student(self.school)
+        # Clear logs created by student creation, but count them first
+        logs_after_student = ActionLog.objects.count()
+        ActionLog.objects.all().delete()
+
         print(
-            f"[DEBUG] Student created, ActionLog count before transaction: {ActionLog.objects.count()}"
+            f"[DEBUG] Student created, cleared {logs_after_student} logs, current count: {ActionLog.objects.count()}"
         )
 
         with transaction.atomic():
@@ -108,7 +136,7 @@ class LogActionUtilityTest(TestCase):
             f"[DEBUG] Transaction block exited, ActionLog count: {ActionLog.objects.count()}"
         )
 
-        # After transaction commits
+        # After transaction commits - should have exactly 1 log
         self.assertEqual(ActionLog.objects.count(), 1)
         log = ActionLog.objects.first()
         self.assertEqual(log.action, "Async test action")
@@ -117,9 +145,17 @@ class LogActionUtilityTest(TestCase):
 
     def test_log_action_async_no_transaction(self):
         print(f"\n[DEBUG] === test_log_action_async_no_transaction started ===")
+
+        # Clear any existing logs at the start
+        ActionLog.objects.all().delete()
+
         student = create_test_student(self.school)
+        # Clear logs created by student creation
+        logs_after_student = ActionLog.objects.count()
+        ActionLog.objects.all().delete()
+
         print(
-            f"[DEBUG] Student created, ActionLog count before async call: {ActionLog.objects.count()}"
+            f"[DEBUG] Student created, cleared {logs_after_student} logs, current count: {ActionLog.objects.count()}"
         )
 
         # Outside transaction - should create immediately in test mode
@@ -136,15 +172,21 @@ class LogActionUtilityTest(TestCase):
 
         # In test mode, this should be created immediately (synchronously)
         self.assertEqual(ActionLog.objects.count(), 1)
+        log = ActionLog.objects.first()
+        self.assertEqual(log.action, "Async immediate action")
         print(f"[DEBUG] === test_log_action_async_no_transaction completed ===\n")
 
     def test_log_system_action(self):
+        # Clear any existing logs
+        ActionLog.objects.all().delete()
+
         log_system_action(
             action="System maintenance",
             category=ActionCategory.SYSTEM,
             metadata={"operation": "database cleanup"},
         )
 
+        self.assertEqual(ActionLog.objects.count(), 1)
         log = ActionLog.objects.first()
         self.assertIsNone(log.user)
         self.assertEqual(log.action, "System maintenance")
@@ -152,7 +194,13 @@ class LogActionUtilityTest(TestCase):
         self.assertEqual(log.metadata["operation"], "database cleanup")
 
     def test_log_action_with_complex_metadata(self):
+        # Clear any existing logs
+        ActionLog.objects.all().delete()
+
         student = create_test_student(self.school)
+        # Clear logs created by student creation
+        ActionLog.objects.all().delete()
+
         complex_metadata = {
             "nested": {
                 "key": "value",
@@ -168,6 +216,7 @@ class LogActionUtilityTest(TestCase):
             metadata=complex_metadata,
         )
 
+        self.assertEqual(ActionLog.objects.count(), 1)
         log = ActionLog.objects.first()
         self.assertIsInstance(log.metadata["nested"], dict)
         self.assertEqual(log.metadata["nested"]["key"], "value")
@@ -177,12 +226,20 @@ class LogActionUtilityTest(TestCase):
         self.assertEqual(log.metadata["nested"]["model_ref"]["id"], student.id)
 
     def test_log_action_with_document_share_link(self):
+        # Clear any existing logs
+        ActionLog.objects.all().delete()
+
         doc = create_test_document(self.school, self.admin_user)
+        # Clear logs created by document creation
+        ActionLog.objects.all().delete()
+
         share_link = DocumentShareLink.objects.create(
             document=doc,
             created_by=self.admin_user,
             expires_at=timezone.now() + timedelta(days=7),
         )
+        # Clear logs created by share link creation (from signals)
+        ActionLog.objects.all().delete()
 
         log_action(
             user=self.admin_user,
@@ -192,6 +249,7 @@ class LogActionUtilityTest(TestCase):
             metadata={"document_id": doc.id, "expires_in_days": 7},
         )
 
+        self.assertEqual(ActionLog.objects.count(), 1)
         log = ActionLog.objects.first()
         self.assertEqual(log.content_object, share_link)
         self.assertEqual(log.metadata["document_id"], doc.id)

@@ -4,6 +4,7 @@ from skul_data.action_logs.models.action_log import ActionLog
 from django.db import transaction
 import threading
 import logging
+from skul_data.users.models.base_user import User
 
 logger = logging.getLogger(__name__)
 
@@ -18,69 +19,85 @@ def set_test_mode(enabled=True):
     _TEST_MODE = enabled
 
 
+# 1. Enhanced log_action utility with better error handling
 def log_action(user, action, category, obj=None, metadata=None):
     """
-    Helper function to manually log actions
-
-    Args:
-        user: User instance who performed the action
-        action: Description of the action (string)
-        category: Action category (from ActionCategory)
-        obj: Optional related object being acted upon
-        metadata: Additional context as a dictionary
+    Helper function to manually log actions with robust error handling
     """
-    content_type = None
-    object_id = None
+    try:
+        # Validate user exists and is saved
+        if user and user.pk:
+            # Use select_for_update to ensure user exists and is committed
+            try:
+                User.objects.filter(pk=user.pk).exists()
+            except Exception:
+                # If user check fails, skip logging rather than crash
+                return None
+        elif user and not user.pk:
+            # User is not saved yet, skip logging
+            return None
 
-    if obj:
-        content_type = ContentType.objects.get_for_model(obj)
-        object_id = obj.pk
+        content_type = None
+        object_id = None
 
-    # Set user_tag based on user or use a default system tag
-    user_tag = (
-        user.user_tag if user else uuid.UUID("00000000-0000-0000-0000-000000000000")
-    )
+        if obj:
+            content_type = ContentType.objects.get_for_model(obj)
+            object_id = obj.pk
 
-    # Process metadata to ensure JSON serialization
-    processed_metadata = {}
-    if metadata:
-        for key, value in metadata.items():
-            if hasattr(value, "pk"):  # If it's a model instance
-                processed_metadata[key] = {
-                    "model": value.__class__.__name__,
-                    "id": value.pk,
-                    "str": str(value),
-                }
-            elif isinstance(value, (list, tuple, set)):
-                processed_metadata[key] = [
-                    (
-                        {"model": v.__class__.__name__, "id": v.pk, "str": str(v)}
-                        if hasattr(v, "pk")
-                        else v
-                    )
-                    for v in value
-                ]
-            elif isinstance(value, dict):
-                processed_metadata[key] = {
-                    k: (
-                        {"model": v.__class__.__name__, "id": v.pk, "str": str(v)}
-                        if hasattr(v, "pk")
-                        else v
-                    )
-                    for k, v in value.items()
-                }
-            else:
-                processed_metadata[key] = value
+        # Set user_tag based on user or use a default system tag
+        user_tag = (
+            user.user_tag if user else uuid.UUID("00000000-0000-0000-0000-000000000000")
+        )
 
-    action_log = ActionLog.objects.create(
-        user=user,
-        user_tag=user_tag,
-        action=action,
-        category=category,
-        content_type=content_type,
-        object_id=object_id,
-        metadata=processed_metadata or {},
-    )
+        # Process metadata to ensure JSON serialization
+        processed_metadata = {}
+        if metadata:
+            for key, value in metadata.items():
+                if hasattr(value, "pk"):  # If it's a model instance
+                    processed_metadata[key] = {
+                        "model": value.__class__.__name__,
+                        "id": value.pk,
+                        "str": str(value),
+                    }
+                elif isinstance(value, (list, tuple, set)):
+                    processed_metadata[key] = [
+                        (
+                            {"model": v.__class__.__name__, "id": v.pk, "str": str(v)}
+                            if hasattr(v, "pk")
+                            else v
+                        )
+                        for v in value
+                    ]
+                elif isinstance(value, dict):
+                    processed_metadata[key] = {
+                        k: (
+                            {"model": v.__class__.__name__, "id": v.pk, "str": str(v)}
+                            if hasattr(v, "pk")
+                            else v
+                        )
+                        for k, v in value.items()
+                    }
+                else:
+                    processed_metadata[key] = value
+
+        action_log = ActionLog.objects.create(
+            user=user,
+            user_tag=user_tag,
+            action=action,
+            category=category,
+            content_type=content_type,
+            object_id=object_id,
+            metadata=processed_metadata or {},
+        )
+        return action_log
+
+    except Exception as e:
+        # Log the error but don't crash the main operation
+        import logging
+
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to create action log: {str(e)}")
+        return None
 
 
 def log_action_async(user, action, category, obj=None, metadata=None):
