@@ -23,6 +23,8 @@ from skul_data.users.serializers.teacher import (
 from skul_data.users.permissions.permission import IsAdministrator, IsTeacher
 from skul_data.users.permissions.permission import HasRolePermission
 from skul_data.users.models.base_user import User
+from skul_data.action_logs.utils.action_log import log_action
+from skul_data.action_logs.models.action_log import ActionCategory
 
 
 class TeacherViewSet(viewsets.ModelViewSet):
@@ -102,6 +104,9 @@ class TeacherViewSet(viewsets.ModelViewSet):
         serializer = TeacherStatusChangeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        # Set the current user on the teacher instance so the signal can access it
+        teacher._current_user = request.user
+
         teacher.status = serializer.validated_data["status"]
         if teacher.status == "TERMINATED":
             teacher.termination_date = serializer.validated_data["termination_date"]
@@ -120,13 +125,57 @@ class TeacherViewSet(viewsets.ModelViewSet):
 
         classes = serializer.validated_data["class_ids"]
         action = serializer.validated_data["action"]
+        current_classes = list(teacher.assigned_classes.values_list("id", flat=True))
+
+        print(f"About to log class assignment: action={action}, classes={classes}")
 
         if action == "ADD":
             teacher.assigned_classes.add(*classes)
+            log_action(
+                user=request.user,
+                action="Teacher classes add operation",
+                category=ActionCategory.UPDATE,
+                obj=teacher,
+                metadata={
+                    "action_type": "CLASS_ADD",
+                    "added_classes": [c.id for c in classes],
+                    "current_classes": list(
+                        teacher.assigned_classes.values_list("id", flat=True)
+                    ),
+                    "teacher_id": teacher.id,
+                },
+            )
         elif action == "REMOVE":
             teacher.assigned_classes.remove(*classes)
+            log_action(
+                user=request.user,
+                action="Teacher classes remove operation",
+                category=ActionCategory.UPDATE,
+                obj=teacher,
+                metadata={
+                    "action_type": "CLASS_REMOVE",
+                    "removed_classes": [c.id for c in classes],
+                    "current_classes": list(
+                        teacher.assigned_classes.values_list("id", flat=True)
+                    ),
+                    "teacher_id": teacher.id,
+                },
+            )
         elif action == "REPLACE":
+            previous_classes = current_classes
             teacher.assigned_classes.set(classes)
+            log_action(
+                user=request.user,
+                action="Teacher classes replace operation",
+                category=ActionCategory.UPDATE,
+                obj=teacher,
+                metadata={
+                    "action_type": "CLASS_REPLACE",
+                    "previous_classes": previous_classes,
+                    "new_classes": [c.id for c in classes],
+                    "teacher_id": teacher.id,
+                },
+            )
 
         return Response(TeacherSerializer(teacher).data, status=status.HTTP_200_OK)
 
@@ -141,13 +190,57 @@ class TeacherViewSet(viewsets.ModelViewSet):
 
         subjects = serializer.validated_data["subject_ids"]
         action = serializer.validated_data["action"]
+        current_subjects = list(teacher.subjects_taught.values_list("id", flat=True))
+
+        print(f"Processing subject assignment: {action} {subjects}")
 
         if action == "ADD":
             teacher.subjects_taught.add(*subjects)
+            log_action(
+                user=request.user,
+                action="Teacher subjects add operation",
+                category=ActionCategory.UPDATE,
+                obj=teacher,
+                metadata={
+                    "action_type": "SUBJECT_ADD",
+                    "added_subjects": [s.id for s in subjects],
+                    "current_subjects": list(
+                        teacher.subjects_taught.values_list("id", flat=True)
+                    ),
+                    "teacher_id": teacher.id,
+                },
+            )
         elif action == "REMOVE":
             teacher.subjects_taught.remove(*subjects)
+            log_action(
+                user=request.user,
+                action="Teacher subjects remove operation",
+                category=ActionCategory.UPDATE,
+                obj=teacher,
+                metadata={
+                    "action_type": "SUBJECT_REMOVE",
+                    "removed_subjects": [s.id for s in subjects],
+                    "current_subjects": list(
+                        teacher.subjects_taught.values_list("id", flat=True)
+                    ),
+                    "teacher_id": teacher.id,
+                },
+            )
         elif action == "REPLACE":
+            previous_subjects = current_subjects
             teacher.subjects_taught.set(subjects)
+            log_action(
+                user=request.user,
+                action="Teacher subjects replace operation",
+                category=ActionCategory.UPDATE,
+                obj=teacher,
+                metadata={
+                    "action_type": "SUBJECT_REPLACE",
+                    "previous_subjects": previous_subjects,
+                    "new_subjects": [s.id for s in subjects],
+                    "teacher_id": teacher.id,
+                },
+            )
 
         return Response(TeacherSerializer(teacher).data, status=status.HTTP_200_OK)
 
@@ -278,3 +371,28 @@ class TeacherDocumentViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(uploaded_by=self.request.user)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+
+        # Log before deletion
+        log_action(
+            user=request.user,
+            action=f"Deleted teacher document: {instance.title}",
+            category=ActionCategory.DELETE,
+            obj=instance,
+            metadata={
+                "document_type": instance.document_type,
+                "teacher_id": instance.teacher.id,
+                "was_confidential": instance.is_confidential,
+            },
+        )
+
+        try:
+            self.perform_destroy(instance)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Exception as e:
+            # Ensure log exists even if deletion fails
+            return Response(
+                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

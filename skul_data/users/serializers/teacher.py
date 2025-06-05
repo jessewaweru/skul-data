@@ -172,13 +172,6 @@ class TeacherAssignmentSerializer(serializers.Serializer):
     action = serializers.ChoiceField(choices=["ADD", "REMOVE", "REPLACE"])
 
 
-# class TeacherSubjectAssignmentSerializer(serializers.Serializer):
-#     subject_ids = serializers.PrimaryKeyRelatedField(
-#         queryset=Subject.objects.all(), many=True
-#     )
-#     action = serializers.ChoiceField(choices=["ADD", "REMOVE", "REPLACE"])
-
-
 class TeacherSubjectAssignmentSerializer(serializers.Serializer):
     subject_ids = serializers.PrimaryKeyRelatedField(
         queryset=Subject.objects.all(), many=True
@@ -189,18 +182,6 @@ class TeacherSubjectAssignmentSerializer(serializers.Serializer):
         if not value:
             raise serializers.ValidationError("At least one subject is required.")
         return value
-
-
-# Serializers for Teacher Attendance, Workload, and Documents
-# class TeacherWorkloadSerializer(serializers.ModelSerializer):
-#     teacher = TeacherSerializer(read_only=True)
-#     school_class = SchoolClassSerializer(read_only=True)
-#     subject = SubjectSerializer(read_only=True)
-
-#     class Meta:
-#         model = TeacherWorkload
-#         fields = "__all__"
-#         read_only_fields = ["created_at", "updated_at"]
 
 
 class TeacherWorkloadSerializer(serializers.ModelSerializer):
@@ -239,17 +220,6 @@ class TeacherWorkloadSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_at", "updated_at"]
 
 
-# class TeacherAttendanceSerializer(serializers.ModelSerializer):
-#     teacher = TeacherSerializer(read_only=True)
-#     recorded_by = BaseUserSerializer(read_only=True)
-#     date = serializers.DateField()
-
-#     class Meta:
-#         model = TeacherAttendance
-#         fields = "__all__"
-#         read_only_fields = ["created_at", "updated_at"]
-
-
 class TeacherAttendanceSerializer(serializers.ModelSerializer):
     teacher = TeacherSerializer(read_only=True)
     teacher_id = serializers.PrimaryKeyRelatedField(
@@ -280,16 +250,6 @@ class TeacherAttendanceSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
-
-
-# class TeacherDocumentSerializer(serializers.ModelSerializer):
-#     teacher = TeacherSerializer(read_only=True)
-#     uploaded_by = BaseUserSerializer(read_only=True)
-
-#     class Meta:
-#         model = TeacherDocument
-#         fields = "__all__"
-#         read_only_fields = ["uploaded_at"]
 
 
 class TeacherDocumentSerializer(serializers.ModelSerializer):
