@@ -114,17 +114,27 @@ def log_model_delete(sender, instance, **kwargs):
         return
 
     try:
-        # Validate content type exists
-        ContentType.objects.get_for_model(sender)
+        metadata = {"deleted_id": instance.pk}
 
-        # Include the instance name in metadata if available
-        metadata = {}
-        if hasattr(instance, "name"):
-            metadata["name"] = instance.name
-        if hasattr(instance, "title"):
-            metadata["title"] = instance.title
-        if hasattr(instance, "pk"):
-            metadata["deleted_id"] = instance.pk
+        # Model-specific metadata extraction
+        if sender.__name__ == "Parent":
+            if hasattr(instance, "user") and instance.user:
+                metadata["name"] = (
+                    f"{instance.user.first_name} {instance.user.last_name}".strip()
+                )
+                metadata["email"] = instance.user.email
+            metadata["phone_number"] = getattr(instance, "phone_number", None)
+            metadata["status"] = getattr(instance, "status", None)
+        elif sender.__name__ == "Student":
+            metadata["name"] = f"{instance.first_name} {instance.last_name}".strip()
+            metadata["student_id"] = getattr(instance, "student_id", None)
+        # Add other model-specific cases as needed
+        else:
+            # Generic fallback
+            if hasattr(instance, "name"):
+                metadata["name"] = instance.name
+            if hasattr(instance, "title"):
+                metadata["title"] = instance.title
 
         log_action(
             user=user,

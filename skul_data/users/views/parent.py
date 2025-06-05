@@ -23,6 +23,8 @@ from skul_data.users.permissions.permission import HasRolePermission
 from skul_data.reports.models.academic_record import AcademicRecord
 from skul_data.reports.serializers.academic_record import AcademicRecordSerializer
 from skul_data.users.models.base_user import User
+from skul_data.action_logs.utils.action_log import log_action
+from skul_data.action_logs.models.action_log import ActionCategory
 
 
 class ParentViewSet(viewsets.ModelViewSet):
@@ -88,24 +90,59 @@ class ParentViewSet(viewsets.ModelViewSet):
 
         return queryset.select_related("user", "school").prefetch_related("children")
 
+    # @action(detail=True, methods=["post"])
+    # def change_status(self, request, pk=None):
+    #     # For custom actions, specify the permission directly
+    #     self.required_permission = "change_parent_status"
+
+    #     parent = self.get_object()
+    #     serializer = self.get_serializer(data=request.data)
+    #     serializer.is_valid(raise_exception=True)
+
+    #     parent.status = serializer.validated_data["status"]
+    #     parent.save()
+
+    #     # Log the status change
+    #     ParentStatusChange.objects.create(
+    #         parent=parent,
+    #         changed_by=request.user,
+    #         from_status=parent.status,
+    #         to_status=serializer.validated_data["status"],
+    #         reason=serializer.validated_data.get("reason", ""),
+    #     )
+
+    #     return Response(ParentSerializer(parent).data)
+
     @action(detail=True, methods=["post"])
     def change_status(self, request, pk=None):
-        # For custom actions, specify the permission directly
-        self.required_permission = "change_parent_status"
-
         parent = self.get_object()
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        parent.status = serializer.validated_data["status"]
+        old_status = parent.status
+        new_status = serializer.validated_data["status"]
+
+        # Log before changing status - use "Changed" to match signal
+        log_action(
+            user=request.user,
+            action=f"Changed parent status from {old_status} to {new_status}",
+            category=ActionCategory.UPDATE,
+            obj=parent,
+            metadata={
+                "reason": serializer.validated_data.get("reason", ""),
+                "old_status": old_status,
+                "new_status": new_status,
+            },
+        )
+
+        parent.status = new_status
         parent.save()
 
-        # Log the status change
         ParentStatusChange.objects.create(
             parent=parent,
             changed_by=request.user,
-            from_status=parent.status,
-            to_status=serializer.validated_data["status"],
+            from_status=old_status,
+            to_status=new_status,
             reason=serializer.validated_data.get("reason", ""),
         )
 
@@ -125,17 +162,49 @@ class ParentViewSet(viewsets.ModelViewSet):
         parent.save()
         return Response(ParentSerializer(parent).data)
 
+    # @action(detail=True, methods=["post"])
+    # def assign_children(self, request, pk=None):
+    #     # For custom actions, specify the permission directly
+    #     self.required_permission = "assign_children"
+
+    #     parent = self.get_object()
+    #     serializer = self.get_serializer(data=request.data)
+    #     serializer.is_valid(raise_exception=True)
+
+    #     students = serializer.validated_data["student_ids"]
+    #     action = serializer.validated_data["action"]
+
+    #     if action == "ADD":
+    #         parent.children.add(*students)
+    #     elif action == "REMOVE":
+    #         parent.children.remove(*students)
+    #     elif action == "REPLACE":
+    #         parent.children.set(students)
+
+    #     return Response(ParentSerializer(parent).data)
+
     @action(detail=True, methods=["post"])
     def assign_children(self, request, pk=None):
-        # For custom actions, specify the permission directly
-        self.required_permission = "assign_children"
-
         parent = self.get_object()
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         students = serializer.validated_data["student_ids"]
         action = serializer.validated_data["action"]
+        current_children = list(parent.children.values_list("id", flat=True))
+
+        # Log before making changes
+        log_action(
+            user=request.user,
+            action=f"Modifying parent-child relationships: {action}",
+            category=ActionCategory.UPDATE,
+            obj=parent,
+            metadata={
+                "current_children": current_children,
+                "new_children": [s.id for s in students],
+                "operation": action,
+            },
+        )
 
         if action == "ADD":
             parent.children.add(*students)
@@ -240,6 +309,31 @@ class ParentViewSet(viewsets.ModelViewSet):
             }
         )
 
+    # def destroy(self, request, *args, **kwargs):
+    #     parent = self.get_object()
+    #     # Log the deletion
+    #     log_action(
+    #         user=request.user,
+    #         action="Deleted parent",
+    #         category=ActionCategory.DELETE,
+    #         obj=parent,
+    #         metadata={
+    #             "name": str(parent),
+    #             "parent_id": parent.id,
+    #             "email": parent.user.email,
+    #         },
+    #     )
+    #     return super().destroy(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        parent = self.get_object()
+
+        # Set current user for the delete signal to pick up
+        User.set_current_user(request.user)
+
+        # Let log_model_delete signal handle the logging
+        return super().destroy(request, *args, **kwargs)
+
 
 class ParentNotificationViewSet(viewsets.ModelViewSet):
     serializer_class = ParentNotificationSerializer
@@ -283,11 +377,33 @@ class ParentNotificationViewSet(viewsets.ModelViewSet):
 
         return queryset
 
+    # @action(detail=True, methods=["post"])
+    # def mark_as_read(self, request, pk=None):
+    #     notification = self.get_object()
+    #     notification.is_read = True
+    #     notification.save()
+    #     return Response({"status": "marked as read"})
+
     @action(detail=True, methods=["post"])
     def mark_as_read(self, request, pk=None):
         notification = self.get_object()
         notification.is_read = True
+        notification.read_at = timezone.now()
         notification.save()
+
+        log_action(
+            user=request.user,
+            action=f"Marked notification as read",
+            category=ActionCategory.UPDATE,
+            obj=notification.parent,
+            metadata={
+                "notification_id": notification.id,
+                "message": (
+                    notification.message[:50] + "..." if notification.message else None
+                ),
+            },
+        )
+
         return Response({"status": "marked as read"})
 
     @action(detail=False, methods=["post"])

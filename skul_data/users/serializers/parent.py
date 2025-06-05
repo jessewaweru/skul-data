@@ -1,13 +1,13 @@
-from rest_framework import serializers
+from rest_framework import serializers, status
 from skul_data.users.models.parent import Parent, ParentNotification, ParentStatusChange
 from django.contrib.auth import get_user_model
 from django.contrib.auth.hashers import make_password
 from skul_data.students.models.student import Student
 from django.utils.crypto import get_random_string
-
-# from skul_data.students.serializers.student import StudentSerializer
 from skul_data.users.serializers.base_user import BaseUserSerializer
 from skul_data.schools.models.school import School
+from skul_data.action_logs.utils.action_log import log_action
+from skul_data.action_logs.models.action_log import ActionCategory
 
 User = get_user_model()
 
@@ -47,12 +47,6 @@ class ParentSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_at", "updated_at"]
 
-    # def get_children_details(self, obj):
-    #     # Import inside method to avoid circular dependency
-    #     from skul_data.students.serializers.student import StudentSerializer
-
-    #     return StudentSerializer(obj.children, many=True).data
-
     def get_children_details(self, obj):
         from skul_data.students.serializers.student import SimpleStudentSerializer
 
@@ -78,9 +72,6 @@ class ParentCreateSerializer(serializers.ModelSerializer):
     school = serializers.PrimaryKeyRelatedField(
         queryset=School.objects.all(), write_only=True
     )
-    # school_id = serializers.PrimaryKeyRelatedField(
-    #     queryset=School.objects.all(), source="school", write_only=True
-    # )
 
     class Meta:
         model = Parent
@@ -92,15 +83,15 @@ class ParentCreateSerializer(serializers.ModelSerializer):
             "password",
             "phone_number",
             "school",
-            # "school_id",
             "address",
             "occupation",
         ]
         read_only_fields = ["id"]
 
     def create(self, validated_data):
-        # Extract email before popping it to use for username
+        request = self.context.get("request")
         email = validated_data.get("email")
+
         # Create the User first
         user_data = {
             "email": validated_data.pop("email", email),
@@ -113,17 +104,20 @@ class ParentCreateSerializer(serializers.ModelSerializer):
         if "password" in validated_data:
             user_data["password"] = make_password(validated_data.pop("password"))
         else:
-            # Generate random password if not provided
             user_data["password"] = make_password(get_random_string(12))
 
         user = User.objects.create(**user_data)
 
-        # Then create the Parent profile
+        # Set current user for the signal to pick up
+        if request and request.user:
+            User.set_current_user(request.user)
+
+        # Then create the Parent profile - let log_model_save signal handle logging
         parent = Parent.objects.create(user=user, **validated_data)
+
         return parent
 
     def to_representation(self, instance):
-        # Override to return full representation after creation
         return ParentSerializer(instance, context=self.context).data
 
 
