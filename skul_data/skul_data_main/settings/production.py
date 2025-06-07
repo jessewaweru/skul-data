@@ -2,6 +2,10 @@
 
 from .base import *
 from decouple import config, Csv
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
 
 DEBUG = False
 
