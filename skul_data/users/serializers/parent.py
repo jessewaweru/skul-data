@@ -1,3 +1,6 @@
+import os
+import csv
+import io
 from rest_framework import serializers, status
 from skul_data.users.models.parent import Parent, ParentNotification, ParentStatusChange
 from django.contrib.auth import get_user_model
@@ -6,8 +9,6 @@ from skul_data.students.models.student import Student
 from django.utils.crypto import get_random_string
 from skul_data.users.serializers.base_user import BaseUserSerializer
 from skul_data.schools.models.school import School
-from skul_data.action_logs.utils.action_log import log_action
-from skul_data.action_logs.models.action_log import ActionCategory
 
 User = get_user_model()
 
@@ -72,6 +73,7 @@ class ParentCreateSerializer(serializers.ModelSerializer):
     school = serializers.PrimaryKeyRelatedField(
         queryset=School.objects.all(), write_only=True
     )
+    status = serializers.CharField(required=False)
 
     class Meta:
         model = Parent
@@ -85,6 +87,7 @@ class ParentCreateSerializer(serializers.ModelSerializer):
             "school",
             "address",
             "occupation",
+            "status",
         ]
         read_only_fields = ["id"]
 
@@ -119,6 +122,74 @@ class ParentCreateSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         return ParentSerializer(instance, context=self.context).data
+
+
+class ParentBulkImportSerializer(serializers.Serializer):
+    file = serializers.FileField()
+    send_welcome_email = serializers.BooleanField(default=False)
+    default_status = serializers.ChoiceField(
+        choices=Parent.STATUS_CHOICES, default="ACTIVE"
+    )
+
+    def validate_file(self, value):
+        # Validate file type and size
+        valid_extensions = [".csv", ".xls", ".xlsx"]
+        ext = os.path.splitext(value.name)[1].lower()
+        if ext not in valid_extensions:
+            raise serializers.ValidationError(
+                "Unsupported file type. Please upload a CSV or Excel file."
+            )
+
+        max_size = 5 * 1024 * 1024  # 5MB
+        if value.size > max_size:
+            raise serializers.ValidationError(
+                f"File too large. Max size is {max_size/1024/1024}MB."
+            )
+
+        # Validate content based on file type
+        try:
+            if ext == ".csv":
+                # Validate CSV content
+                content = value.read().decode("utf-8")
+                reader = csv.DictReader(io.StringIO(content))
+
+                # Check for required columns
+                required_columns = {"email", "first_name", "last_name"}
+                if not required_columns.issubset(reader.fieldnames or []):
+                    missing = required_columns - set(reader.fieldnames or [])
+                    raise serializers.ValidationError(
+                        f"Missing required columns: {', '.join(missing)}"
+                    )
+
+                # Reset file pointer for later use
+                value.seek(0)
+
+            else:
+                # Validate Excel content
+                import pandas as pd
+
+                df = pd.read_excel(value, sheet_name=0)
+
+                # Check for required columns
+                required_columns = {"email", "first_name", "last_name"}
+                if not required_columns.issubset(df.columns):
+                    missing = required_columns - set(df.columns)
+                    raise serializers.ValidationError(
+                        f"Missing required columns: {', '.join(missing)}"
+                    )
+
+                # Reset file pointer for later use
+                value.seek(0)
+
+        except Exception as e:
+            # Reset file pointer even if validation fails
+            try:
+                value.seek(0)
+            except:
+                pass
+            raise serializers.ValidationError(f"Error reading file: {str(e)}")
+
+        return value
 
 
 class ParentChildAssignmentSerializer(serializers.Serializer):

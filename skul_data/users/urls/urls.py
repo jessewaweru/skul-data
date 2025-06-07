@@ -61,6 +61,16 @@ urlpatterns = [
         ParentViewSet.as_view({"get": "notifications"}),
         name="parent-notifications",
     ),
+    # path(
+    #     "parents/bulk-import/",
+    #     ParentViewSet.as_view({"post": "bulk_import"}),
+    #     name="parent-bulk-import",
+    # ),
+    # path(
+    #     "parents/download-template/",
+    #     ParentViewSet.as_view({"get": "download_template"}),
+    #     name="parent-download-template",
+    # ),
     # Custom teacher actions
     path(
         "teachers/<int:pk>/change-status/",

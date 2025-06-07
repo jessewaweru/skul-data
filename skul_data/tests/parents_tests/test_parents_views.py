@@ -11,6 +11,10 @@ from skul_data.tests.parents_tests.test_helpers import (
 )
 from skul_data.users.models.teacher import Teacher
 from skul_data.users.models.school_admin import SchoolAdmin
+from django.core.files.uploadedfile import SimpleUploadedFile
+from skul_data.action_logs.models.action_log import ActionLog
+from openpyxl import Workbook
+from io import BytesIO
 
 User = get_user_model()
 
@@ -74,6 +78,11 @@ class ParentViewSetTest(APITestCase):
         )
 
         self.client.force_authenticate(user=self.admin_user)
+
+    def tearDown(self):
+        # Clear action logs after each test
+        ActionLog.objects.all().delete()
+        super().tearDown()
 
     def test_parent_list_url_resolves(self):
         url = reverse("parent-list")
@@ -251,6 +260,11 @@ class ParentNotificationViewSetTest(APITestCase):
 
         self.client.force_authenticate(user=self.admin_user)
 
+    def tearDown(self):
+        # Clear action logs after each test
+        ActionLog.objects.all().delete()
+        super().tearDown()
+
     def test_notification_list_url_resolves(self):
         url = reverse("parent-notification-list")
         self.assertEqual(resolve(url).func.cls.__name__, "ParentNotificationViewSet")
@@ -362,6 +376,207 @@ class ParentStatusChangeViewSetTest(APITestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data), 1)
+
+
+class ParentBulkImportViewTest(APITestCase):
+    def setUp(self):
+        self.school, self.admin = create_test_school()
+        self.student1 = create_test_student(self.school, first_name="Student1")
+        self.student2 = create_test_student(self.school, first_name="Student2")
+
+        # Create admin user with permissions
+        self.admin_user = User.objects.create_user(
+            email="admin@test.com",
+            username="admin",
+            password="testpass",
+            user_type=User.SCHOOL_ADMIN,
+        )
+        SchoolAdmin.objects.create(
+            user=self.admin_user,
+            school=self.school,
+            is_primary=False,
+        )
+        self.client.force_authenticate(user=self.admin_user)
+
+        # URL for bulk import
+        self.url = reverse("parent-bulk-import")
+        # Use the DRF-generated URL names
+        self.bulk_import_url = reverse("parent-bulk-import")
+        self.template_url = reverse("parent-download-template")
+
+    def tearDown(self):
+        # Clear action logs after each test
+        ActionLog.objects.all().delete()
+        super().tearDown()
+
+    def create_test_csv(self, content=None):
+        if content is None:
+            # Fixed CSV format - proper escaping for multiple children_ids
+            content = f"""email,first_name,last_name,phone_number,children_ids
+parent1@test.com,John,Doe,+254712345678,{self.student1.id}
+parent2@test.com,Jane,Smith,+254723456789,{self.student2.id}
+parent3@test.com,Robert,Johnson,+254734567890,"{self.student1.id},{self.student2.id}" """
+        return SimpleUploadedFile(
+            "parents.csv", content.encode(), content_type="text/csv"
+        )
+
+    def create_test_excel(self, rows=None):
+        wb = Workbook()
+        ws = wb.active
+        headers = ["email", "first_name", "last_name", "phone_number", "children_ids"]
+        ws.append(headers)
+
+        if rows is None:
+            rows = [
+                [
+                    "excel1@test.com",
+                    "Excel",
+                    "User",
+                    "+254711111111",
+                    str(self.student1.id),
+                ],
+                [
+                    "excel2@test.com",
+                    "Excel",
+                    "User2",
+                    "+254722222222",
+                    str(self.student2.id),
+                ],
+            ]
+
+        for row in rows:
+            ws.append(row)
+
+        buffer = BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+
+        return SimpleUploadedFile(
+            "parents.xlsx",
+            buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    def test_bulk_import_csv_success(self):
+        csv_file = self.create_test_csv()
+        data = {
+            "file": csv_file,
+            "send_welcome_email": False,
+            "default_status": "ACTIVE",
+        }
+
+        response = self.client.post(self.url, data, format="multipart")
+        print(f"Response status: {response.status_code}")
+        print(f"Response data: {response.data}")
+
+        self.assertEqual(response.status_code, status.HTTP_207_MULTI_STATUS)
+        self.assertEqual(Parent.objects.count(), 3)
+        self.assertEqual(len(response.data["success"]), 3)
+
+        # Verify one of the parents was created correctly
+        parent = Parent.objects.get(user__email="parent1@test.com")
+        self.assertEqual(parent.user.first_name, "John")
+        self.assertEqual(parent.children.count(), 1)
+        self.assertEqual(parent.status, "ACTIVE")
+
+    def test_bulk_import_excel_success(self):
+        excel_file = self.create_test_excel()
+        data = {
+            "file": excel_file,
+            "send_welcome_email": True,
+            "default_status": "PENDING",
+        }
+
+        response = self.client.post(self.url, data, format="multipart")
+        print(f"Excel Response status: {response.status_code}")
+        print(f"Excel Response data: {response.data}")
+
+        self.assertEqual(response.status_code, status.HTTP_207_MULTI_STATUS)
+
+    def test_bulk_import_partial_success(self):
+        # Fixed CSV - one row will fail (missing last_name)
+        csv_content = f"""email,first_name,last_name,children_ids
+good1@test.com,Good,Parent,{self.student1.id}
+bad@test.com,Bad,,{self.student2.id}
+good2@test.com,Good2,Parent2,{self.student2.id}"""
+        csv_file = self.create_test_csv(csv_content)
+
+        response = self.client.post(self.url, {"file": csv_file}, format="multipart")
+        print(f"Partial Response status: {response.status_code}")
+        print(f"Partial Response data: {response.data}")
+
+        self.assertEqual(response.status_code, status.HTTP_207_MULTI_STATUS)
+        self.assertEqual(len(response.data["success"]), 2)
+        self.assertEqual(len(response.data["errors"]), 1)
+        self.assertEqual(Parent.objects.count(), 2)
+
+    def test_bulk_import_invalid_file(self):
+        pdf_file = SimpleUploadedFile(
+            "invalid.pdf", b"PDF content", content_type="application/pdf"
+        )
+        response = self.client.post(self.url, {"file": pdf_file}, format="multipart")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_bulk_import_missing_required_columns(self):
+        # Missing first_name column
+        csv_content = "email,last_name\nparent@test.com,Doe"
+        csv_file = self.create_test_csv(csv_content)
+
+        response = self.client.post(self.url, {"file": csv_file}, format="multipart")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_bulk_import_children_assignment(self):
+        # Fixed: Use proper CSV formatting with quotes for multiple IDs
+        csv_content = f"""email,first_name,last_name,children_ids
+parent@test.com,Test,Parent,"{self.student1.id},{self.student2.id}" """
+        csv_file = self.create_test_csv(csv_content)
+
+        data = {
+            "file": csv_file,
+            "send_welcome_email": False,
+            "default_status": "ACTIVE",
+        }
+        response = self.client.post(self.bulk_import_url, data, format="multipart")
+        print(f"Children assignment Response status: {response.status_code}")
+        print(f"Children assignment Response data: {response.data}")
+
+        self.assertEqual(response.status_code, status.HTTP_207_MULTI_STATUS)
+
+    def test_bulk_import_invalid_children_ids(self):
+        # Student ID 99 doesn't exist - use proper CSV format
+        csv_content = f"""email,first_name,last_name,children_ids
+parent@test.com,Test,Parent,"{self.student1.id},99" """
+        csv_file = self.create_test_csv(csv_content)
+
+        response = self.client.post(self.url, {"file": csv_file}, format="multipart")
+        print(f"Invalid children Response status: {response.status_code}")
+        print(f"Invalid children Response data: {response.data}")
+
+        self.assertEqual(response.status_code, status.HTTP_207_MULTI_STATUS)
+        self.assertEqual(len(response.data["errors"]), 1)
+
+    def test_bulk_import_permissions(self):
+        # Test non-admin can't access
+        parent_user = User.objects.create_user(
+            email="parent@test.com",
+            username="parent",
+            password="testpass",
+            user_type=User.PARENT,
+        )
+        Parent.objects.create(user=parent_user, school=self.school)
+        self.client.force_authenticate(user=parent_user)
+
+        csv_file = self.create_test_csv()
+        response = self.client.post(self.url, {"file": csv_file}, format="multipart")
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_download_template(self):
+        response = self.client.get(self.template_url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
 
 # python manage.py test skul_data.tests.parents_tests.test_parents_views

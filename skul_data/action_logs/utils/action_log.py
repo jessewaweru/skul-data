@@ -1,4 +1,4 @@
-import uuid
+import uuid, os, sys
 from django.contrib.contenttypes.models import ContentType
 from skul_data.action_logs.models.action_log import ActionLog
 from django.db import transaction
@@ -24,6 +24,13 @@ def log_action(user, action, category, obj=None, metadata=None):
     """
     Helper function to manually log actions with robust error handling
     """
+    # # Skip logging in test environment
+    # if "test" in sys.argv or "TEST" in os.environ:
+    #     return None
+
+    # Skip logging only if not in test mode (unless test mode is explicitly enabled)
+    if not _TEST_MODE and ("test" in sys.argv or "TEST" in os.environ):
+        return None
     try:
         # Validate user exists and is saved
         if user and user.pk:

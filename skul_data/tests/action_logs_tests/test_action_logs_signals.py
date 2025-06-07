@@ -20,6 +20,9 @@ class ActionLogSignalsTest(TransactionTestCase):
     """Test action log signals with proper isolation"""
 
     def setUp(self):
+        from skul_data.action_logs.utils.action_log import set_test_mode
+
+        set_test_mode(True)  # Enable test mode
         """Set up test data with proper transaction management"""
         # Clear all existing action logs to start fresh
         ActionLog.objects.all().delete()

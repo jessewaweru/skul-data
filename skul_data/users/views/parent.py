@@ -25,6 +25,18 @@ from skul_data.reports.serializers.academic_record import AcademicRecordSerializ
 from skul_data.users.models.base_user import User
 from skul_data.action_logs.utils.action_log import log_action
 from skul_data.action_logs.models.action_log import ActionCategory
+from skul_data.users.utils.parent import send_parent_email
+from openpyxl import Workbook
+from skul_data.users.serializers.parent import ParentBulkImportSerializer
+from rest_framework import status
+from django.db import transaction
+from django.http import HttpResponse
+import os
+import pandas as pd
+import logging
+import re
+
+logger = logging.getLogger(__name__)
 
 
 class ParentViewSet(viewsets.ModelViewSet):
@@ -90,29 +102,6 @@ class ParentViewSet(viewsets.ModelViewSet):
 
         return queryset.select_related("user", "school").prefetch_related("children")
 
-    # @action(detail=True, methods=["post"])
-    # def change_status(self, request, pk=None):
-    #     # For custom actions, specify the permission directly
-    #     self.required_permission = "change_parent_status"
-
-    #     parent = self.get_object()
-    #     serializer = self.get_serializer(data=request.data)
-    #     serializer.is_valid(raise_exception=True)
-
-    #     parent.status = serializer.validated_data["status"]
-    #     parent.save()
-
-    #     # Log the status change
-    #     ParentStatusChange.objects.create(
-    #         parent=parent,
-    #         changed_by=request.user,
-    #         from_status=parent.status,
-    #         to_status=serializer.validated_data["status"],
-    #         reason=serializer.validated_data.get("reason", ""),
-    #     )
-
-    #     return Response(ParentSerializer(parent).data)
-
     @action(detail=True, methods=["post"])
     def change_status(self, request, pk=None):
         parent = self.get_object()
@@ -161,27 +150,6 @@ class ParentViewSet(viewsets.ModelViewSet):
         parent.status = "INACTIVE"
         parent.save()
         return Response(ParentSerializer(parent).data)
-
-    # @action(detail=True, methods=["post"])
-    # def assign_children(self, request, pk=None):
-    #     # For custom actions, specify the permission directly
-    #     self.required_permission = "assign_children"
-
-    #     parent = self.get_object()
-    #     serializer = self.get_serializer(data=request.data)
-    #     serializer.is_valid(raise_exception=True)
-
-    #     students = serializer.validated_data["student_ids"]
-    #     action = serializer.validated_data["action"]
-
-    #     if action == "ADD":
-    #         parent.children.add(*students)
-    #     elif action == "REMOVE":
-    #         parent.children.remove(*students)
-    #     elif action == "REPLACE":
-    #         parent.children.set(students)
-
-    #     return Response(ParentSerializer(parent).data)
 
     @action(detail=True, methods=["post"])
     def assign_children(self, request, pk=None):
@@ -309,21 +277,309 @@ class ParentViewSet(viewsets.ModelViewSet):
             }
         )
 
-    # def destroy(self, request, *args, **kwargs):
-    #     parent = self.get_object()
-    #     # Log the deletion
-    #     log_action(
-    #         user=request.user,
-    #         action="Deleted parent",
-    #         category=ActionCategory.DELETE,
-    #         obj=parent,
-    #         metadata={
-    #             "name": str(parent),
-    #             "parent_id": parent.id,
-    #             "email": parent.user.email,
-    #         },
-    #     )
-    #     return super().destroy(request, *args, **kwargs)
+    @action(detail=False, methods=["post"], url_path="bulk-import")
+    def bulk_import(self, request):
+        serializer = ParentBulkImportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        file = serializer.validated_data["file"]
+        send_welcome_email = serializer.validated_data["send_welcome_email"]
+        default_status = serializer.validated_data["default_status"]
+
+        try:
+            # Read the file based on its type
+            ext = os.path.splitext(file.name)[1].lower()
+
+            # if ext == ".csv":
+            #     df = pd.read_csv(file)
+            # else:  # Excel files
+            #     df = pd.read_excel(file, sheet_name=0)
+
+            # # In bulk_import method
+            # if ext == ".csv":
+            #     df = pd.read_csv(file, dtype=str)  # Force all columns as strings
+            # else:
+            #     df = pd.read_excel(
+            #         file, sheet_name=0, dtype=str
+            #     )  # Force all columns as strings
+
+            if ext == ".csv":
+                # Read CSV with phone_number as string to prevent float conversion
+                df = pd.read_csv(file, dtype={"phone_number": "str"})
+            else:  # Excel files
+                # Read Excel with phone_number as string
+                df = pd.read_excel(file, sheet_name=0, dtype={"phone_number": "str"})
+
+            # Validate required columns
+            required_columns = {"email", "first_name", "last_name"}
+            if not required_columns.issubset(df.columns):
+                missing = required_columns - set(df.columns)
+                return Response(
+                    {"error": f'Missing required columns: {", ".join(missing)}'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Get school from the request user
+            if hasattr(request.user, "school_admin_profile"):
+                school = request.user.school_admin_profile.school
+            else:
+                school = request.user.school
+
+            if not school:
+                return Response(
+                    {"error": "No school associated with user"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Process each row
+            results = {"success": [], "errors": []}
+
+            with transaction.atomic():
+                for index, row in df.iterrows():
+                    try:
+                        # Skip empty rows
+                        if (
+                            pd.isna(row.get("email"))
+                            or not str(row.get("email")).strip()
+                        ):
+                            continue
+
+                        # Validate required fields
+                        required_fields = ["email", "first_name", "last_name"]
+                        missing_fields = []
+                        for field in required_fields:
+                            if (
+                                pd.isna(row.get(field))
+                                or not str(row.get(field)).strip()
+                            ):
+                                missing_fields.append(field)
+
+                        if missing_fields:
+                            results["errors"].append(
+                                {
+                                    "row": index + 2,
+                                    "email": str(row.get("email", "")).strip(),
+                                    "error": f"Missing required fields: {', '.join(missing_fields)}",
+                                }
+                            )
+                            continue
+
+                        # Prepare parent data - ENSURE STATUS IS SET
+                        parent_data = {
+                            "email": str(row["email"]).strip(),
+                            "first_name": str(row["first_name"]).strip(),
+                            "last_name": str(row["last_name"]).strip(),
+                            "school": school.id,
+                            "status": default_status,  # This should be preserved
+                        }
+
+                        # Handle optional fields with proper null checking
+                        # if "phone_number" in row and pd.notna(row["phone_number"]):
+                        #     parent_data["phone_number"] = str(
+                        #         row["phone_number"]
+                        #     ).strip()
+
+                        if (
+                            "phone_number" in row
+                            and pd.notna(row["phone_number"])
+                            and str(row["phone_number"]).strip() != "nan"
+                        ):
+                            phone_str = str(row["phone_number"]).strip()
+                            # Add + prefix if missing
+                            if not phone_str.startswith("+"):
+                                phone_str = "+" + phone_str
+                            parent_data["phone_number"] = phone_str
+
+                        if "address" in row and pd.notna(row["address"]):
+                            parent_data["address"] = str(row["address"]).strip()
+
+                        if "occupation" in row and pd.notna(row["occupation"]):
+                            parent_data["occupation"] = str(row["occupation"]).strip()
+
+                        if "preferred_language" in row and pd.notna(
+                            row["preferred_language"]
+                        ):
+                            parent_data["preferred_language"] = str(
+                                row["preferred_language"]
+                            ).strip()
+
+                        # Handle children assignment (your existing logic)
+                        children_ids = []
+                        if "children_ids" in row and pd.notna(row["children_ids"]):
+                            try:
+                                children_str = str(row["children_ids"]).strip()
+                                if children_str:
+                                    # Handle multiple separators: comma, semicolon, or space
+                                    id_parts = re.split(r"[,;\s]", children_str)
+                                    for id_part in id_parts:
+                                        id_clean = id_part.strip()
+                                        if id_clean and id_clean.isdigit():
+                                            children_ids.append(int(id_clean))
+                            except (ValueError, AttributeError) as e:
+                                results["errors"].append(
+                                    {
+                                        "row": index + 2,
+                                        "email": parent_data.get("email", ""),
+                                        "error": f"Invalid children_ids format: {str(e)}",
+                                    }
+                                )
+                                continue
+
+                        # Validate children exist in the school
+                        if children_ids:
+                            valid_children = Student.objects.filter(
+                                id__in=children_ids, school=school
+                            )
+                            invalid_ids = set(children_ids) - set(
+                                valid_children.values_list("id", flat=True)
+                            )
+                            if invalid_ids:
+                                results["errors"].append(
+                                    {
+                                        "row": index + 2,
+                                        "email": parent_data.get("email", ""),
+                                        "error": f"Invalid student IDs: {list(invalid_ids)}",
+                                    }
+                                )
+                                continue
+
+                        # Create parent
+                        parent_serializer = ParentCreateSerializer(
+                            data=parent_data, context={"request": request}
+                        )
+
+                        if parent_serializer.is_valid():
+                            parent = parent_serializer.save()
+
+                            # Assign children if specified and valid
+                            if children_ids:
+                                children = Student.objects.filter(
+                                    id__in=children_ids, school=school
+                                )
+                                parent.children.set(children)
+
+                            # Send welcome email if requested
+                            if send_welcome_email:
+                                try:
+                                    subject = f"Welcome to {school.name}"
+                                    message = f"Hello {parent.user.first_name} {parent.user.last_name},\n\nYou have been registered as a parent at {school.name}."
+                                    send_parent_email(parent, subject, message)
+                                except Exception as e:
+                                    logger.warning(
+                                        f"Failed to send welcome email to {parent.user.email}: {str(e)}"
+                                    )
+
+                            results["success"].append(
+                                {
+                                    "row": index + 2,
+                                    "parent_id": parent.id,
+                                    "email": parent.user.email,
+                                    "name": f"{parent.user.first_name} {parent.user.last_name}",
+                                }
+                            )
+                        else:
+                            results["errors"].append(
+                                {
+                                    "row": index + 2,
+                                    "email": parent_data.get("email", ""),
+                                    "error": parent_serializer.errors,
+                                }
+                            )
+
+                    except Exception as e:
+                        results["errors"].append(
+                            {
+                                "row": index + 2,
+                                "email": (
+                                    parent_data.get("email", "")
+                                    if "parent_data" in locals()
+                                    else ""
+                                ),
+                                "error": str(e),
+                            }
+                        )
+
+            if results["success"]:
+                # Get the first successfully created parent
+                first_parent = Parent.objects.get(id=results["success"][0]["parent_id"])
+                log_action(
+                    user=request.user,
+                    action=f"Bulk imported {len(results['success'])} parents",
+                    category=ActionCategory.CREATE,
+                    obj=first_parent,
+                    metadata={
+                        "total_attempted": len(results["success"])
+                        + len(results["errors"]),
+                        "successful": len(results["success"]),
+                        "failed": len(results["errors"]),
+                        "default_status": default_status,
+                        "send_welcome_email": send_welcome_email,
+                    },
+                )
+
+            # FIXED: Always return 207 for bulk operations
+            if not results.get("success") and results.get("errors"):
+                return Response(
+                    {
+                        "error": "No valid records processed",
+                        "success": [],
+                        "errors": results["errors"],
+                    },
+                    status=status.HTTP_207_MULTI_STATUS,  # Changed from 400 to 207
+                )
+
+            return Response(results, status=status.HTTP_207_MULTI_STATUS)
+
+        except Exception as e:
+            logger.error(f"Bulk import failed: {str(e)}")
+            return Response(
+                {"error": f"Failed to process file: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    @action(detail=False, methods=["get"], url_path="download-template")
+    def download_template(self, request):
+        # Create a workbook and add a worksheet
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Parents Template"
+
+        # Add headers
+        headers = [
+            "email",
+            "first_name",
+            "last_name",
+            "phone_number",
+            "address",
+            "occupation",
+            "children_ids",
+            "preferred_language",
+        ]
+        ws.append(headers)
+
+        # Add example row
+        example_row = [
+            "parent@example.com",
+            "John",
+            "Doe",
+            "+254712345678",
+            "123 Main St",
+            "Engineer",
+            "1,2,3",
+            "en",
+        ]
+        ws.append(example_row)
+
+        # Create response
+        response = HttpResponse(
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        response["Content-Disposition"] = (
+            "attachment; filename=parents_import_template.xlsx"
+        )
+        wb.save(response)
+
+        return response
 
     def destroy(self, request, *args, **kwargs):
         parent = self.get_object()
@@ -376,13 +632,6 @@ class ParentNotificationViewSet(viewsets.ModelViewSet):
             return queryset.filter(related_student__in=student_ids)
 
         return queryset
-
-    # @action(detail=True, methods=["post"])
-    # def mark_as_read(self, request, pk=None):
-    #     notification = self.get_object()
-    #     notification.is_read = True
-    #     notification.save()
-    #     return Response({"status": "marked as read"})
 
     @action(detail=True, methods=["post"])
     def mark_as_read(self, request, pk=None):

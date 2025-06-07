@@ -13,6 +13,9 @@ from skul_data.tests.parents_tests.test_helpers import (
     create_test_parent,
     create_test_student,
 )
+from django.core.files.uploadedfile import SimpleUploadedFile
+from rest_framework.test import APITestCase
+from skul_data.users.serializers.parent import ParentBulkImportSerializer
 
 User = get_user_model()
 
@@ -151,6 +154,60 @@ class ParentStatusChangeSerializerTest(TestCase):
         serializer = ParentStatusUpdateSerializer(data=data)
         self.assertFalse(serializer.is_valid())
         self.assertIn("status", serializer.errors)
+
+
+class ParentBulkImportSerializerTest(APITestCase):
+    def setUp(self):
+        self.school, self.admin = create_test_school()
+        self.student = create_test_student(self.school)
+
+    def test_valid_data(self):
+        # Create a test CSV file
+        csv_content = (
+            "email,first_name,last_name,children_ids\nparent1@test.com,John,Doe,1"
+        )
+        file = SimpleUploadedFile(
+            "parents.csv", csv_content.encode(), content_type="text/csv"
+        )
+
+        data = {"file": file, "send_welcome_email": True, "default_status": "ACTIVE"}
+
+        serializer = ParentBulkImportSerializer(data=data)
+        self.assertTrue(serializer.is_valid())
+
+    def test_invalid_file_type(self):
+        # Create a test PDF file (invalid type)
+        pdf_content = b"%PDF-1.3 invalid pdf content"
+        file = SimpleUploadedFile(
+            "parents.pdf", pdf_content, content_type="application/pdf"
+        )
+
+        data = {"file": file}
+        serializer = ParentBulkImportSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("file", serializer.errors)
+
+    def test_file_size_limit(self):
+        # Create a large test file (>5MB)
+        large_content = b"x" * (6 * 1024 * 1024)  # 6MB
+        file = SimpleUploadedFile("large.csv", large_content, content_type="text/csv")
+
+        data = {"file": file}
+        serializer = ParentBulkImportSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("file", serializer.errors)
+
+    def test_missing_required_fields(self):
+        # CSV missing required first_name column
+        csv_content = "email,last_name\nparent1@test.com,Doe"
+        file = SimpleUploadedFile(
+            "parents.csv", csv_content.encode(), content_type="text/csv"
+        )
+
+        data = {"file": file}
+        serializer = ParentBulkImportSerializer(data=data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("file", serializer.errors)
 
 
 # python manage.py test skul_data.tests.parents_tests.test_parents_serializers

@@ -9,6 +9,10 @@ from skul_data.tests.parents_tests.test_helpers import (
     create_test_student,
 )
 from skul_data.users.models.school_admin import SchoolAdmin
+from django.core.files.uploadedfile import SimpleUploadedFile
+from rest_framework import status
+from rest_framework.test import APITestCase
+import os
 
 User = get_user_model()
 
@@ -100,6 +104,99 @@ class ParentIntegrationTest(TestCase):
         response = self.client.get(other_detail_url)
         print(response.data)
         self.assertEqual(response.status_code, 404)
+
+
+class ParentBulkImportIntegrationTest(APITestCase):
+    def setUp(self):
+        from skul_data.action_logs.utils.action_log import set_test_mode
+
+        set_test_mode(True)
+
+        self.school, self.admin = create_test_school()
+        self.student1 = create_test_student(self.school, first_name="Alice")
+        self.student2 = create_test_student(self.school, first_name="Bob")
+
+        # Admin user
+        self.admin_user = User.objects.create_user(
+            email="admin@test.com",
+            username="admin",
+            password="testpass",
+            user_type=User.SCHOOL_ADMIN,
+        )
+        SchoolAdmin.objects.create(
+            user=self.admin_user,
+            school=self.school,
+            is_primary=False,
+        )
+        self.client.force_authenticate(user=self.admin_user)
+
+        self.url = reverse("parent-bulk-import")
+
+        # Enable logging for this test
+        self.original_test_env = os.environ.get("TEST", None)
+        if "TEST" in os.environ:
+            del os.environ["TEST"]
+
+    def tearDown(self):
+        # Restore original test environment
+        if self.original_test_env is not None:
+            os.environ["TEST"] = self.original_test_env
+
+    def test_full_bulk_import_flow(self):
+        # 1. Download template
+        template_url = reverse("parent-download-template")
+        template_response = self.client.get(template_url)
+        self.assertEqual(template_response.status_code, status.HTTP_200_OK)
+
+        # 2. Prepare import file
+        csv_content = """email,first_name,last_name,phone_number,children_ids,preferred_language
+parent1@test.com,John,Doe,+254712345678,1,en
+parent2@test.com,Jane,Smith,+254723456789,2,sw
+parent3@test.com,Bob,Johnson,,"1,2",fr"""
+        csv_file = SimpleUploadedFile(
+            "parents.csv", csv_content.encode(), content_type="text/csv"
+        )
+
+        # 3. Perform import
+        import_data = {
+            "file": csv_file,
+            "send_welcome_email": True,
+            "default_status": "ACTIVE",
+        }
+        import_response = self.client.post(self.url, import_data, format="multipart")
+        self.assertEqual(import_response.status_code, status.HTTP_207_MULTI_STATUS)
+        results = import_response.data
+
+        # 4. Verify results
+        self.assertEqual(Parent.objects.count(), 3)
+
+        # Check one parent in detail
+        parent1 = Parent.objects.get(user__email="parent1@test.com")
+        self.assertEqual(parent1.user.first_name, "John")
+        self.assertEqual(parent1.phone_number, "+254712345678")
+        self.assertEqual(parent1.children.count(), 1)
+        self.assertEqual(parent1.children.first(), self.student1)
+        self.assertEqual(parent1.status, "ACTIVE")
+        self.assertEqual(parent1.preferred_language, "en")
+
+        # Check parent with multiple children
+        parent3 = Parent.objects.get(user__email="parent3@test.com")
+        self.assertEqual(parent3.children.count(), 2)
+
+        # 5. Verify notifications were sent (would be mocked in real test)
+        from django.core import mail
+
+        self.assertEqual(len(mail.outbox), 3)  # One for each parent
+
+        # 6. Verify audit logs
+        from skul_data.action_logs.models.action_log import ActionLog
+
+        logs = ActionLog.objects.filter(
+            content_type__model="parent",
+            action__icontains="bulk imported",  # Changed to match the logged action
+        )
+        self.assertEqual(logs.count(), 1)
+        self.assertIn(str(len(results["success"])), logs.first().action)
 
 
 # python manage.py test skul_data.tests.parents_tests.test_parents_integration
