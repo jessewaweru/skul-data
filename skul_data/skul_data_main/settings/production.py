@@ -1,4 +1,4 @@
-# skul_main_data/settings/production.py
+# skul_data_main/settings/production.py
 
 from .base import *
 from decouple import config, Csv
