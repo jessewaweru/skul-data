@@ -93,7 +93,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = "skul_data.skul_data_main.wsgi.application"
+WSGI_APPLICATION = "skul_data_main.wsgi.application"
 
 
 # Database
