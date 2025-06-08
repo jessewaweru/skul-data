@@ -10,8 +10,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 DEBUG = False
 
 # Replace with your actual domain or Render URL
+# ALLOWED_HOSTS = config(
+#     "DJANGO_ALLOWED_HOSTS", default="your-app.onrender.com", cast=Csv()
+# )
+
 ALLOWED_HOSTS = config(
-    "DJANGO_ALLOWED_HOSTS", default="your-app.onrender.com", cast=Csv()
+    "DJANGO_ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv()
 )
 
 # SECURITY WARNING: keep the secret key used in production secret!
