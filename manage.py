@@ -35,9 +35,11 @@ def main():
     project_root = Path(__file__).resolve().parent
     sys.path.append(str(project_root))
 
-    os.environ.setdefault(
-        "DJANGO_SETTINGS_MODULE", "skul_data.skul_data_main.settings.base"
-    )
+    # Use environment variable if set, otherwise default to base for local development
+    default_settings = "skul_data.skul_data_main.settings.base"
+    settings_module = os.environ.get("DJANGO_SETTINGS_MODULE", default_settings)
+
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", settings_module)
 
     try:
         from django.core.management import execute_from_command_line
