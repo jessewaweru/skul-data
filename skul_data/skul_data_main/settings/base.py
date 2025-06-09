@@ -75,7 +75,7 @@ MIDDLEWARE = [
     "skul_data.users.models.base_user.CurrentUserMiddleware",
 ]
 
-ROOT_URLCONF = "skul_data_main.urls"
+ROOT_URLCONF = "skul_data.skul_data_main.urls"
 
 TEMPLATES = [
     {
@@ -93,7 +93,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = "skul_data_main.wsgi.application"
+WSGI_APPLICATION = "skul_data.skul_data_main.wsgi.application"
 
 
 # Database
