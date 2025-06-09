@@ -26,7 +26,7 @@ project_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_dir))
 
 os.environ.setdefault(
-    "DJANGO_SETTINGS_MODULE", "skul_data.skul_main_data.settings.production"
+    "DJANGO_SETTINGS_MODULE", "skul_data.skul_data_main.settings.production"
 )
 
 application = get_wsgi_application()
