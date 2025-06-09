@@ -71,7 +71,7 @@ CORS_ALLOWED_ORIGINS = config(
 # CELERY_BROKER_URL = config("CELERY_BROKER_URL")
 # CELERY_RESULT_BACKEND = config("CELERY_RESULT_BACKEND", default=CELERY_BROKER_URL)
 
-# Logging (basic production logging setup)
+# Replace your current LOGGING configuration with this:
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -82,15 +82,14 @@ LOGGING = {
         },
     },
     "handlers": {
-        "file": {
+        "console": {
             "level": "INFO",
-            "class": "logging.FileHandler",
-            "filename": BASE_DIR / "logs/django.log",
+            "class": "logging.StreamHandler",
             "formatter": "verbose",
         },
     },
     "root": {
-        "handlers": ["file"],
+        "handlers": ["console"],
         "level": "INFO",
     },
 }
