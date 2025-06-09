@@ -14,6 +14,7 @@ cron-descriptor==1.4.5
 cssselect2==0.8.0
 Django==5.1.7
 django-celery-beat==2.7.0
+django-cors-headers==4.7.0
 django-filter==25.1
 django-timezone-field==7.1
 django_celery_results==2.6.0

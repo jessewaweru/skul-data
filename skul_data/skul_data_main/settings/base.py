@@ -22,6 +22,8 @@ DEBUG = True
 
 ALLOWED_HOSTS = []
 
+CORS_ALLOW_ALL_ORIGINS = True
+
 
 # Application definition
 
@@ -52,6 +54,7 @@ THIRD_PARTY_APPS = [
     "drf_yasg",
     "django_celery_results",
     "django_celery_beat",
+    "corsheaders",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + PROJECT_APPS + THIRD_PARTY_APPS
@@ -73,6 +76,7 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "skul_data.action_logs.middleware.action_log.ActionLogMiddleware",
     "skul_data.users.models.base_user.CurrentUserMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
 ]
 
 ROOT_URLCONF = "skul_data.skul_data_main.urls"
