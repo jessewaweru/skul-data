@@ -5,6 +5,7 @@ from skul_data.notifications.models.notification import (
     MessageAttachment,
 )
 from skul_data.users.serializers.base_user import UserDetailSerializer
+from skul_data.users.models.base_user import User
 
 
 class MessageAttachmentSerializer(serializers.ModelSerializer):
@@ -31,6 +32,21 @@ class MessageSerializer(serializers.ModelSerializer):
             "created_at",
             "attachments",
         ]
+
+
+class MessageRecipientSerializer(serializers.ModelSerializer):
+    type = serializers.SerializerMethodField()
+    type_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ["id", "name", "email", "type", "type_display"]
+
+    def get_type(self, obj):
+        return obj.user_type
+
+    def get_type_display(self, obj):
+        return obj.get_user_type_display()
 
 
 class NotificationSerializer(serializers.ModelSerializer):
