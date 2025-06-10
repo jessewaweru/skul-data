@@ -117,21 +117,30 @@ class MessageViewSet(viewsets.ModelViewSet):
             f"messages_{message.recipient.id}",
             {
                 "type": "chat_message",
-                "message": message.body,
-                "sender_id": message.sender.id,
                 "message_id": message.id,
+                "sender_id": str(
+                    message.sender.id
+                ),  # Ensure string for JSON serialization
+                "sender_name": message.sender.get_full_name(),
+                "subject": message.subject,
+                "body": message.body,
+                "is_read": message.is_read,
+                "created_at": message.created_at.isoformat(),
+                "status": "new",  # Helps frontend distinguish new messages
             },
         )
 
-        # Email notification if enabled
-        if message.recipient.email_notifications_enabled:
-            send_mail(
-                f"New message: {message.subject}",
-                message.body,
-                settings.DEFAULT_FROM_EMAIL,
-                [message.recipient.email],
-                fail_silently=True,
-            )
+        # Also notify sender that message was delivered
+        async_to_sync(channel_layer.group_send)(
+            f"messages_{message.sender.id}",
+            {
+                "type": "chat_message",
+                "message_id": message.id,
+                "status": "delivered",
+                "recipient_id": str(message.recipient.id),
+                "created_at": message.created_at.isoformat(),
+            },
+        )
 
 
 # class MessageViewSet(viewsets.ModelViewSet):
