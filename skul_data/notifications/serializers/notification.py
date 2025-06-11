@@ -16,7 +16,8 @@ class MessageAttachmentSerializer(serializers.ModelSerializer):
 
 class MessageSerializer(serializers.ModelSerializer):
     sender = UserDetailSerializer(read_only=True)
-    recipient = UserDetailSerializer(read_only=True)
+    # recipient = UserDetailSerializer(read_only=True)
+    recipient = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())
     attachments = MessageAttachmentSerializer(many=True, read_only=True)
 
     class Meta:
@@ -35,12 +36,12 @@ class MessageSerializer(serializers.ModelSerializer):
 
 
 class MessageRecipientSerializer(serializers.ModelSerializer):
-    type = serializers.SerializerMethodField()
+    type = serializers.CharField(source="user_type")
     type_display = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ["id", "name", "email", "type", "type_display"]
+        fields = ["id", "first_name", "last_name", "email", "type", "type_display"]
 
     def get_type(self, obj):
         return obj.user_type

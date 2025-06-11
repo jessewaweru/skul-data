@@ -28,6 +28,7 @@ CORS_ALLOW_ALL_ORIGINS = True
 # Application definition
 
 DJANGO_APPS = [
+    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -55,6 +56,7 @@ THIRD_PARTY_APPS = [
     "django_celery_results",
     "django_celery_beat",
     "corsheaders",
+    "channels",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + PROJECT_APPS + THIRD_PARTY_APPS
@@ -63,8 +65,9 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ),
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 10,
 }
-
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -99,20 +102,28 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "skul_data.skul_data_main.wsgi.application"
 
+# Configure ASGI application
+ASGI_APPLICATION = "skul_data.skul_data_main.asgi.application"
+
+# Channel layers configuration (using Redis)
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [(config("REDIS_HOST", "localhost"), 6379)],
+        },
+    },
+}
+
+# Override channel layers for testing web sockets in notifications app
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+    },
+}
 
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
-
-# DATABASES = {
-#     "default": {
-#         "ENGINE": "django.db.backends.postgresql",
-#         "NAME": "skul-data",  # Your database name
-#         "USER": "postgres",  # Your PostgreSQL username
-#         "PASSWORD": "membleyj122",  # Your PostgreSQL password
-#         "HOST": "localhost",  # Database host
-#         "PORT": "5432",  # Default PostgreSQL port
-#     }
-# }
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",

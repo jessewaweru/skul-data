@@ -1,4 +1,4 @@
-from rest_framework import viewsets, permissions, status
+from rest_framework import viewsets, permissions
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from skul_data.notifications.models.notification import Notification, Message
@@ -8,10 +8,9 @@ from skul_data.notifications.serializers.notification import (
 )
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-from django.core.mail import send_mail
-from django.conf import settings
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
+from rest_framework.pagination import PageNumberPagination
 from django.db import models
 from skul_data.users.models.base_user import User
 from skul_data.notifications.serializers.notification import MessageRecipientSerializer
@@ -43,8 +42,9 @@ class MessageViewSet(viewsets.ModelViewSet):
     serializer_class = MessageSerializer
     permission_classes = [permissions.IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    filterset_fields = ["is_read", "is_starred"]
+    filterset_fields = ["is_read"]
     search_fields = ["subject", "body", "sender__name", "recipient__name"]
+    pagination_class = PageNumberPagination
 
     def get_queryset(self):
         if self.action == "sent":
@@ -73,12 +73,22 @@ class MessageViewSet(viewsets.ModelViewSet):
         count = Message.objects.filter(recipient=request.user, is_read=False).count()
         return Response({"unread_count": count})
 
+    # @action(detail=False, methods=["get"])
+    # def sent(self, request):
+    #     sent_messages = self.get_queryset()
+    #     page = self.paginate_queryset(sent_messages)
+    #     serializer = self.get_serializer(page, many=True)
+    #     return self.get_paginated_response(serializer.data)
+
     @action(detail=False, methods=["get"])
     def sent(self, request):
-        sent_messages = self.get_queryset()
-        page = self.paginate_queryset(sent_messages)
-        serializer = self.get_serializer(page, many=True)
-        return self.get_paginated_response(serializer.data)
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
     @action(detail=False, methods=["get"])
     def recipients(self, request):
