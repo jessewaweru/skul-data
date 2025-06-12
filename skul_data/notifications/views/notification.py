@@ -73,13 +73,6 @@ class MessageViewSet(viewsets.ModelViewSet):
         count = Message.objects.filter(recipient=request.user, is_read=False).count()
         return Response({"unread_count": count})
 
-    # @action(detail=False, methods=["get"])
-    # def sent(self, request):
-    #     sent_messages = self.get_queryset()
-    #     page = self.paginate_queryset(sent_messages)
-    #     serializer = self.get_serializer(page, many=True)
-    #     return self.get_paginated_response(serializer.data)
-
     @action(detail=False, methods=["get"])
     def sent(self, request):
         queryset = self.filter_queryset(self.get_queryset())
@@ -151,56 +144,3 @@ class MessageViewSet(viewsets.ModelViewSet):
                 "created_at": message.created_at.isoformat(),
             },
         )
-
-
-# class MessageViewSet(viewsets.ModelViewSet):
-#     serializer_class = MessageSerializer
-#     permission_classes = [permissions.IsAuthenticated]
-
-#     def get_queryset(self):
-#         return Message.objects.filter(recipient=self.request.user).order_by(
-#             "-created_at"
-#         )
-
-#     @action(detail=True, methods=["post"])
-#     def mark_as_read(self, request, pk=None):
-#         message = self.get_object()
-#         message.is_read = True
-#         message.save()
-#         return Response({"status": "marked as read"})
-
-#     @action(detail=False, methods=["get"])
-#     def sent(self, request):
-#         sent_messages = Message.objects.filter(sender=request.user).order_by(
-#             "-created_at"
-#         )
-#         serializer = self.get_serializer(sent_messages, many=True)
-#         return Response(serializer.data)
-
-#     def perform_create(self, serializer):
-#         message = serializer.save(sender=self.request.user)
-
-#         # Send WebSocket notification
-#         channel_layer = get_channel_layer()
-#         async_to_sync(channel_layer.group_send)(
-#             f"messages_{message.recipient.id}",
-#             {
-#                 "type": "chat_message",
-#                 "message": message.body,
-#                 "sender_id": message.sender.id,
-#                 "message_id": message.id,
-#             },
-#         )
-
-#         # Also send to sender for confirmation
-#         async_to_sync(channel_layer.group_send)(
-#             f"messages_{message.sender.id}",
-#             {
-#                 "type": "chat_message",
-#                 "message": message.body,
-#                 "sender_id": message.sender.id,
-#                 "recipient_id": message.recipient.id,
-#                 "message_id": message.id,
-#                 "status": "delivered",
-#             },
-#         )

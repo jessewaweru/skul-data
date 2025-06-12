@@ -49,5 +49,4 @@ urlpatterns = [
     path("analytics/", include("skul_data.analytics.urls")),
     path("logs/", include("skul_data.action_logs.urls")),
     path("notifications/", include("skul_data.notifications.urls")),
-    path("dashboards/", include("skul_data.dashboards.urls")),
 ]

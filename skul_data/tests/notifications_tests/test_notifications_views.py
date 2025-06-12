@@ -183,30 +183,6 @@ class MessageViewSetTest(APITestCase):
         self.assertEqual(len(response.data["results"]), 1)
         self.assertEqual(response.data["results"][0]["id"], self.message1.id)
 
-    # @override_settings(
-    #     CHANNEL_LAYERS={
-    #         "default": {
-    #             "BACKEND": "channels.layers.InMemoryChannelLayer",
-    #         },
-    #     }
-    # )
-    # def test_create_message_triggers_notification(self):
-    #     self.client.force_authenticate(user=self.sender)
-    #     url = reverse("message-list")
-    #     data = {
-    #         "recipient": self.recipient.id,
-    #         "subject": "New Test Message",
-    #         "body": "This is a new test message",
-    #         "message_type": "TEACHER",
-    #     }
-
-    #     # Test that the WebSocket notification is sent
-    #     with patch("channels.layers.get_channel_layer") as mock_channel_layer:
-    #         mock_channel_layer.return_value = get_channel_layer()
-    #         response = self.client.post(url, data, format="json")
-    #         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-    #         self.assertTrue(mock_channel_layer.called)
-
     @override_settings(
         CHANNEL_LAYERS={
             "default": {

@@ -43,7 +43,6 @@ PROJECT_APPS = [
     "skul_data.notifications",
     "skul_data.documents",
     "skul_data.students",
-    "skul_data.dashboards",
     "skul_data.action_logs",
     "skul_data.scheduler",
     "skul_data.analytics",
