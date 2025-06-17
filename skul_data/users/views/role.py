@@ -20,7 +20,7 @@ class RoleViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         # Only show roles for the current user's school
-        return Role.objects.filter(school=self.request.user.school)
+        return Role.objects.filter(school=self.request.user.school).order_by("id")
 
     def perform_create(self, serializer):
         # Automatically assign the school from current user

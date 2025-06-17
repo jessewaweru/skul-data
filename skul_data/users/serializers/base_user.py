@@ -32,42 +32,86 @@ class BaseUserSerializer(serializers.ModelSerializer):
 class UserDetailSerializer(BaseUserSerializer):
     teacher_profile = serializers.SerializerMethodField()
     parent_profile = serializers.SerializerMethodField()
-    schooladmin_profile = serializers.SerializerMethodField()
+    school_admin_profile = (
+        serializers.SerializerMethodField()
+    )  # Changed from schooladmin_profile to match your model
+    sessions = serializers.SerializerMethodField()  # Add this for user sessions
 
     class Meta(BaseUserSerializer.Meta):
         fields = BaseUserSerializer.Meta.fields + [
             "teacher_profile",
             "parent_profile",
-            "schooladmin_profile",
+            "school_admin_profile",  # Changed to match
+            "sessions",  # Added
         ]
 
     def get_teacher_profile(self, obj):
         if hasattr(obj, "teacher_profile"):
             return {
-                "school": str(obj.teacher_profile.school),
-                "subjects_taught": obj.teacher_profile.subjects_taught,
-                "assigned_class": (
-                    str(obj.teacher_profile.assigned_class)
-                    if obj.teacher_profile.assigned_class
+                # "school": (
+                #     str(obj.teacher_profile.school.id)
+                #     if obj.teacher_profile.school
+                #     else None
+                # ),
+                "school": (
+                    str(obj.teacher_profile.school)
+                    if obj.teacher_profile.school
                     else None
                 ),
+                "subjects_taught": (
+                    [
+                        str(subject)
+                        for subject in obj.teacher_profile.subjects_taught.all()
+                    ]
+                    if hasattr(obj.teacher_profile, "subjects_taught")
+                    else []
+                ),
+                "assigned_classes": (
+                    [str(cls) for cls in obj.teacher_profile.assigned_classes.all()]
+                    if hasattr(obj.teacher_profile, "assigned_classes")
+                    else []
+                ),
+                "status": obj.teacher_profile.status,
             }
         return None
 
     def get_parent_profile(self, obj):
         if hasattr(obj, "parent_profile"):
             return {
-                "school": str(obj.parent_profile.school),
+                "school": (
+                    str(obj.parent_profile.school.id)
+                    if obj.parent_profile.school
+                    else None
+                ),
                 "phone_number": obj.parent_profile.phone_number,
-                "children": [str(child) for child in obj.parent_profile.children.all()],
+                "children": [
+                    {"id": child.id, "name": str(child)}
+                    for child in obj.parent_profile.children.all()
+                ],
+                "status": obj.parent_profile.status,
             }
         return None
 
-    def get_schooladmin_profile(self, obj):
-        if hasattr(obj, "schooladmin_profile"):
+    def get_school_admin_profile(self, obj):
+        if hasattr(obj, "school_admin_profile"):
             return {
-                "school_name": obj.schooladmin_profile.school_name,
-                "school_code": obj.schooladmin_profile.school_code,
-                "phone_number": obj.schooladmin_profile.phone_number,
+                "school": (
+                    str(obj.school_admin_profile.school.id)
+                    if obj.school_admin_profile.school
+                    else None
+                ),
+                "is_primary": obj.school_admin_profile.is_primary,
             }
         return None
+
+    def get_sessions(self, obj):
+        if hasattr(obj, "sessions"):
+            return [
+                {
+                    "session_key": us.session.session_key,  # Access through session relation
+                    "ip_address": us.ip_address,
+                    "device": us.device,
+                }
+                for us in obj.sessions.all()  # This gets UserSession objects
+            ]
+        return []

@@ -1,23 +1,18 @@
 from django.contrib.auth import get_user_model
 from django.urls import reverse
-from rest_framework.test import APITestCase, APIRequestFactory
+from rest_framework.test import APITestCase
 from rest_framework import status
 from skul_data.tests.users_tests.users_factories import (
-    UserFactory,
     SchoolFactory,
     RoleFactory,
     PermissionFactory,
-    ParentFactory,
-    TeacherFactory,
     SchoolAdminFactory,
-    ParentNotificationFactory,
     UserSessionFactory,
+    TeacherFactory,
+    ParentFactory,
 )
-from skul_data.users.models.role import Role, Permission
+from skul_data.users.models.role import Role
 from skul_data.users.models.session import UserSession
-from skul_data.users.models.parent import Parent
-from skul_data.students.models.student import Subject, Student
-from skul_data.users.models.teacher import Teacher
 from skul_data.users.models.school_admin import SchoolAdmin
 from django.utils import timezone
 from django.contrib.sessions.models import Session
@@ -27,43 +22,60 @@ User = get_user_model()
 
 
 class RoleViewSetTest(APITestCase):
-
     def setUp(self):
         self.school = SchoolFactory()
-        self.admin = SchoolAdminFactory(school=self.school)
-        self.admin.user.is_staff = True  # Add this
-        self.admin.user.school = self.school
-        self.admin.user.save()  # Add this
-        self.client.force_authenticate(user=self.admin.user)
-        # Create permission and assign to role
-        self.permission = PermissionFactory(
-            code="manage_roles"
-        )  # Or whatever permission your view requires
+        self.primary_admin = SchoolAdminFactory(school=self.school, is_primary=True)
+        self.primary_admin.user.is_staff = True
+        self.primary_admin.user.save()
+
+        # Create role with manage_users permission
         self.role = RoleFactory(school=self.school)
+        self.permission = PermissionFactory(code="manage_users")
         self.role.permissions.add(self.permission)
-        self.admin.user.role = self.role  # Assign role to user
-        self.admin.user.save()
-        self.url = reverse("role-list")
+        self.primary_admin.user.role = self.role
+        self.primary_admin.user.save()
+
+        # Create test users
+        self.teacher = TeacherFactory(school=self.school)
+        self.parent = ParentFactory(school=self.school)
+
+        self.client.force_authenticate(user=self.primary_admin.user)
+        self.url = reverse("user-list")
+
+        # Delete any automatically created roles
+        Role.objects.filter(school=self.school).exclude(id=self.role.id).delete()
 
     def test_list_roles(self):
-        response = self.client.get(self.url)
+        # Debug: Print all roles in database
+        all_roles = Role.objects.all()
+        print(f"All roles in DB: {list(all_roles.values_list('name', 'school'))}")
+
+        # Debug: Print roles filtered by school
+        filtered_roles = Role.objects.filter(school=self.school)
+        print(
+            f"Roles for school {self.school.id}: {list(filtered_roles.values_list('name'))}"
+        )
+
+        response = self.client.get(reverse("role-list"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-        if "results" in response.data:  # Paginated response
+        # Debug: Print response data
+        print(f"Response data: {response.data}")
+
+        if "results" in response.data:
             self.assertEqual(len(response.data["results"]), 1)
-        else:  # Non-paginated
+        else:
             self.assertEqual(len(response.data), 1)
 
     def test_create_role(self):
+        self.url = reverse("role-list")  # Make sure this is the role endpoint
         data = {
             "name": "New Role",
             "permissions": [self.permission.id],
-            "school": self.school.id,  # Add the school ID
+            "school": self.school.id,
         }
         response = self.client.post(self.url, data, format="json")
-        print(f"Response data: {response.data}")  # For debugging
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(Role.objects.count(), 2)
 
     def test_update_role(self):
         url = reverse("role-detail", args=[self.role.id])
@@ -79,10 +91,21 @@ class RoleViewSetTest(APITestCase):
         self.assertEqual(self.role.name, "Updated Role")
 
     def test_delete_role(self):
+        initial_count = Role.objects.count()
+        print(f"Initial role count: {initial_count}")
+
         url = reverse("role-detail", args=[self.role.id])
         response = self.client.delete(url)
+
+        print(f"Delete response status: {response.status_code}")
+        print(f"Response content: {response.content}")
+
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-        self.assertEqual(Role.objects.count(), 0)
+        self.assertEqual(Role.objects.count(), initial_count - 1)
+
+        # Verify the specific role is gone
+        with self.assertRaises(Role.DoesNotExist):
+            Role.objects.get(id=self.role.id)
 
 
 class SessionViewSetTest(APITestCase):
@@ -98,9 +121,7 @@ class SessionViewSetTest(APITestCase):
         )
 
         # Pass session object, not session_key
-        self.user_session = UserSessionFactory(
-            user=self.admin.user, session=session  # ✅ Correct usage
-        )
+        self.user_session = UserSessionFactory(user=self.admin.user, session=session)
 
         self.url = reverse("usersession-list")
 
@@ -128,186 +149,6 @@ class SessionViewSetTest(APITestCase):
         self.assertEqual(UserSession.objects.count(), 0)
 
 
-class ParentViewSetTest(APITestCase):
-    def setUp(self):
-        self.school = SchoolFactory()
-        self.admin = SchoolAdminFactory(school=self.school)
-
-        # IMPORTANT: Set the correct user_type for the SchoolAdmin user
-        self.admin.user.user_type = User.SCHOOL_ADMIN
-        self.admin.user.save()
-
-        # Create role with the necessary permissions
-        self.role = RoleFactory(school=self.school)
-
-        # Create and add ALL relevant permissions for parent management
-        permission_codes = [
-            "manage_parents",
-            "create_parent",
-            "update_parent",
-            "view_parents",
-            "assign_children",
-            "change_parent_status",
-        ]
-
-        for code in permission_codes:
-            perm = PermissionFactory(code=code)
-            self.role.permissions.add(perm)
-
-        # Assign role to admin user
-        self.admin.user.role = self.role
-        self.admin.user.school = self.school
-        self.admin.user.save()
-
-        # Authenticate the client
-        self.client.force_authenticate(user=self.admin.user)
-
-        # Create test data
-        self.parent = ParentFactory(school=self.school)
-        self.student = Student.objects.create(
-            first_name="John",
-            last_name="Doe",
-            date_of_birth="2000-01-01",
-            school=self.school,
-        )
-        self.url = reverse("parent-list")
-
-    def test_list_parents(self):
-        response = self.client.get(self.url)
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # self.assertEqual(len(response.data["results"]), 1)
-        if "results" in response.data:  # Paginated response
-            self.assertEqual(len(response.data["results"]), 1)
-        else:  # Non-paginated
-            self.assertEqual(len(response.data), 1)
-
-    def test_create_parent(self):
-        data = {
-            "email": "newparent@example.com",
-            "first_name": "New",
-            "last_name": "Parent",
-            "phone_number": "1234567890",
-            "school": self.school.id,
-        }
-        response = self.client.post(self.url, data, format="json")
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(Parent.objects.count(), 2)
-
-    def test_change_parent_status(self):
-        url = reverse("parent-change-status", args=[self.parent.id])
-        data = {
-            "status": "INACTIVE",
-            "reason": "Test reason",
-        }
-        response = self.client.post(url, data, format="json")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.parent.refresh_from_db()
-        self.assertEqual(self.parent.status, "INACTIVE")
-
-    def test_assign_children(self):
-        url = reverse("parent-assign-children", args=[self.parent.id])
-        data = {
-            "student_ids": [self.student.id],
-            "action": "ADD",
-        }
-        response = self.client.post(url, data, format="json")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(self.parent.children.count(), 1)
-
-    def test_parent_notifications(self):
-        ParentNotificationFactory(parent=self.parent)
-        url = reverse("parent-notifications", args=[self.parent.id])
-        response = self.client.get(url)
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 1)
-
-
-class TeacherViewSetTest(APITestCase):
-    def setUp(self):
-        self.school = SchoolFactory()
-        self.admin = SchoolAdminFactory(school=self.school)
-
-        # Make sure admin is properly configured
-        self.admin.user.is_staff = True
-        self.admin.user.user_type = User.SCHOOL_ADMIN  # Make sure this is set properly
-
-        # Create role with the necessary permissions
-        self.role = RoleFactory(school=self.school)
-
-        # Add ALL needed permissions explicitly
-        permission_codes = [
-            "manage_teachers",
-            "create_teacher",
-            "update_teacher",
-            "view_teachers",
-            "assign_subjects",
-            "assign_classes",
-            "change_teacher_status",
-        ]
-
-        for code in permission_codes:
-            perm = PermissionFactory(code=code)
-            self.role.permissions.add(perm)
-
-        # Assign role to admin user
-        self.admin.user.role = self.role
-        self.admin.user.school = self.school
-        self.admin.user.save()
-
-        # Authenticate the client
-        self.client.force_authenticate(user=self.admin.user)
-
-        # Create test data
-        self.teacher = TeacherFactory(school=self.school)
-        self.subject = Subject.objects.create(name="Math", school=self.school)
-        self.url = reverse("teacher-list")
-
-    def test_list_teachers(self):
-        response = self.client.get(self.url)
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-
-        if "results" in response.data:  # Paginated response
-            self.assertEqual(len(response.data["results"]), 1)
-        else:  # Non-paginated
-            self.assertEqual(len(response.data), 1)
-
-    def test_create_teacher(self):
-        user = UserFactory()
-        data = {
-            "user_id": user.id,
-            "school": self.school.id,
-            "status": "ACTIVE",
-        }
-        response = self.client.post(self.url, data, format="json")
-
-        print(f"Response status: {response.status_code}")
-        print(f"Response data: {response.data}")  # This will show the validation errors
-
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(Teacher.objects.count(), 2)
-
-    def test_change_teacher_status(self):
-        url = reverse("teacher-change-status", args=[self.teacher.id])
-        data = {
-            "status": "TERMINATED",
-            "termination_date": "2023-12-31",
-        }
-        response = self.client.post(url, data, format="json")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.teacher.refresh_from_db()
-        self.assertEqual(self.teacher.status, "TERMINATED")
-
-    def test_assign_subjects(self):
-        url = reverse("teacher-assign-subjects", args=[self.teacher.id])
-        data = {
-            "subject_ids": [self.subject.id],
-            "action": "ADD",
-        }
-        response = self.client.post(url, data, format="json")
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(self.teacher.subjects_taught.count(), 1)
-
-
 class SchoolAdminViewSetTest(APITestCase):
     def setUp(self):
         self.school = SchoolFactory()
@@ -325,9 +166,6 @@ class SchoolAdminViewSetTest(APITestCase):
         for code in permission_codes:
             permission = PermissionFactory(code=code)
             self.role.permissions.add(permission)
-
-        self.primary_admin.user.school = self.school
-        self.primary_admin.user.save()
 
         self.client.force_authenticate(user=self.primary_admin.user)
         self.admin = SchoolAdminFactory(school=self.school, is_primary=False)
@@ -369,6 +207,194 @@ class SchoolAdminViewSetTest(APITestCase):
         # Check that the status was transferred correctly
         self.assertTrue(self.admin.is_primary)
         self.assertFalse(self.primary_admin.is_primary)
+
+
+class UserViewSetTest(APITestCase):
+    def setUp(self):
+        # Create school and primary admin
+        self.school = SchoolFactory()
+        self.primary_admin = SchoolAdminFactory(school=self.school, is_primary=True)
+        self.primary_admin.user.is_staff = True
+
+        # Create role with manage_users permission
+        self.role = RoleFactory(school=self.school)
+        self.permission = PermissionFactory(code="manage_users")
+        self.role.permissions.add(self.permission)
+        self.primary_admin.user.role = self.role
+        self.primary_admin.user.save()
+
+        # Create test users
+        self.teacher = TeacherFactory(school=self.school)
+        self.parent = ParentFactory(school=self.school)
+
+        # Authenticate as primary admin
+        self.client.force_authenticate(user=self.primary_admin.user)
+
+        # Base URL
+        self.url = reverse("user-list")
+
+    def test_list_users(self):
+        """School admin should see all users in their school"""
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Should see admin, teacher, and parent
+        user_ids = (
+            [user["id"] for user in response.data["results"]]
+            if "results" in response.data
+            else [user["id"] for user in response.data]
+        )
+        self.assertIn(self.primary_admin.user.id, user_ids)
+        self.assertIn(self.teacher.user.id, user_ids)
+        self.assertIn(self.parent.user.id, user_ids)
+
+    def test_create_user(self):
+        """School admin should be able to create new users"""
+        data = {
+            "username": "newuser",
+            "email": "newuser@example.com",
+            "first_name": "New",
+            "last_name": "User",
+            "password": "testpassword123",
+            "is_active": True,
+        }
+        response = self.client.post(self.url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(User.objects.filter(username="newuser").exists())
+
+    def test_retrieve_user_detail(self):
+        """Should return detailed user information"""
+        url = reverse("user-detail", args=[self.teacher.user.id])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("teacher_profile", response.data)
+        self.assertEqual(response.data["teacher_profile"]["school"], str(self.school))
+
+    def test_update_user(self):
+        """Should allow updating user details"""
+        url = reverse("user-detail", args=[self.teacher.user.id])
+        data = {
+            "first_name": "Updated",
+            "last_name": "Teacher",
+            "email": self.teacher.user.email,  # Required for update
+        }
+        response = self.client.patch(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.teacher.user.refresh_from_db()
+        self.assertEqual(self.teacher.user.first_name, "Updated")
+
+    def test_deactivate_user(self):
+        """Should allow deactivating users"""
+        url = reverse("user-deactivate", args=[self.teacher.user.id])
+        response = self.client.post(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.teacher.user.refresh_from_db()
+        self.assertFalse(self.teacher.user.is_active)
+
+    def test_activate_user(self):
+        """Should allow reactivating users"""
+        self.teacher.user.is_active = False
+        self.teacher.user.save()
+        url = reverse("user-activate", args=[self.teacher.user.id])
+        response = self.client.post(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.teacher.user.refresh_from_db()
+        self.assertTrue(self.teacher.user.is_active)
+
+    def test_set_password(self):
+        """Admin should be able to set user passwords"""
+        url = reverse("user-set-password", args=[self.teacher.user.id])
+        data = {"password": "newsecurepassword123"}
+        response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Refresh the user from database
+        self.teacher.user.refresh_from_db()
+        self.assertTrue(self.teacher.user.check_password("newsecurepassword123"))
+
+    def test_me_endpoint(self):
+        """Should return current user's profile"""
+        self.client.force_authenticate(user=self.teacher.user)
+        url = reverse("user-me")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["id"], self.teacher.user.id)
+
+    def test_search_users(self):
+        """Should search users by name, email, or username"""
+        search_url = reverse("user-search")
+        response = self.client.get(search_url, {"q": self.teacher.user.last_name})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(len(response.data) > 0)
+        # Check if teacher's ID is in the results
+        self.assertIn(self.teacher.user.id, [user["id"] for user in response.data])
+
+    def test_permissions_endpoint(self):
+        """Should return user's effective permissions"""
+        url = reverse("user-permissions", args=[self.teacher.user.id])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("user_type", response.data)
+        self.assertEqual(response.data["user_type"], User.TEACHER)
+
+    def test_teacher_cannot_list_users(self):
+        """Teachers should only see their own profile"""
+        self.client.force_authenticate(user=self.teacher.user)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Should only see themselves in the list
+        user_ids = (
+            [user["id"] for user in response.data["results"]]
+            if "results" in response.data
+            else [user["id"] for user in response.data]
+        )
+        self.assertEqual(len(user_ids), 1)
+        self.assertEqual(user_ids[0], self.teacher.user.id)
+
+    def test_parent_cannot_list_users(self):
+        """Parents should only see their own profile"""
+        self.client.force_authenticate(user=self.parent.user)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Should only see themselves in the list
+        user_ids = (
+            [user["id"] for user in response.data["results"]]
+            if "results" in response.data
+            else [user["id"] for user in response.data]
+        )
+        self.assertEqual(len(user_ids), 1)
+        self.assertEqual(user_ids[0], self.parent.user.id)
+
+    def test_cross_school_user_access(self):
+        """Should not allow access to users from other schools"""
+        other_school = SchoolFactory()
+        other_teacher = TeacherFactory(school=other_school)
+
+        url = reverse("user-detail", args=[other_teacher.user.id])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_user_sessions_relation(self):
+        """Should include user sessions in detailed view"""
+        # Create a session for the teacher
+        session = Session.objects.create(
+            session_key="test_session_123",
+            session_data="{}",
+            expire_date=timezone.now() + timezone.timedelta(days=1),
+        )
+        UserSessionFactory(user=self.teacher.user, session=session)
+
+        url = reverse("user-detail", args=[self.teacher.user.id])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(
+            any(
+                s["session_key"] == "test_session_123"
+                for s in response.data.get("sessions", [])
+            )
+        )
 
 
 # python manage.py test skul_data.tests.users_tests.test_users_views

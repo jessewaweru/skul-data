@@ -363,12 +363,6 @@ class ClassAttendanceViewSet(viewsets.ModelViewSet):
 
         queryset = queryset.filter(school_class__school=school)
 
-        # if user.user_type == "teacher":
-        #     return queryset.filter(
-        #         models.Q(school_class__class_teacher=user.teacher_profile)
-        #         | models.Q(taken_by=user)
-        #     )
-
         if user.user_type == User.TEACHER:
             # UPDATED: Allow teachers to see attendance for their classes
             return queryset.filter(

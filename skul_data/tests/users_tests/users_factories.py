@@ -45,9 +45,11 @@ class SchoolFactory(factory.django.DjangoModelFactory):
 
     name = factory.Sequence(lambda n: f"School {n}")
     code = factory.Sequence(lambda n: f"SCH{n:04d}")
-    address = fake.address()
+    location = factory.LazyAttribute(lambda _: fake.address())
     phone = factory.LazyAttribute(lambda _: fake.numerify(text="###########"))
     email = factory.LazyAttribute(lambda _: fake.email())
+    type = "PRI"
+    country = "Kenya"
     # Create a school admin user and assign it
     schooladmin = factory.SubFactory(SchoolAdminUserFactory)
 
@@ -108,6 +110,7 @@ class SchoolAdminFactory(factory.django.DjangoModelFactory):
     school = factory.SubFactory(
         SchoolFactory, schooladmin=factory.SelfAttribute("..user")
     )
+    school = factory.SubFactory(SchoolFactory)
     is_primary = True
 
 

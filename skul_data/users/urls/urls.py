@@ -16,9 +16,10 @@ from skul_data.users.views.teacher import (
     TeacherDocumentViewSet,
 )
 from skul_data.users.views.school_admin import SchoolAdminViewSet
-
+from skul_data.users.views.base_user import UserViewSet
 
 router = DefaultRouter()
+router.register(r"users", UserViewSet, basename="user")
 router.register(r"roles", RoleViewSet, basename="role")
 router.register(r"permissions", PermissionViewSet, basename="permission")
 router.register("sessions", UserSessionViewSet, basename="usersession")

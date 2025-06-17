@@ -11,37 +11,6 @@ from django.db import transaction
 from django.contrib.contenttypes.models import ContentType
 
 
-# @receiver(post_save, sender=Permission)
-# def log_permission_changes(sender, instance, created, **kwargs):
-#     """Log permission changes with validation"""
-#     try:
-#         # Validate content type exists
-#         ContentType.objects.get_for_model(Permission)
-
-#         user = User.get_current_user()
-#         if not user or not user.pk:
-#             return
-
-#         # Verify user exists in database
-#         if not User.objects.filter(pk=user.pk).exists():
-#             return
-
-#         action = "Created permission" if created else "Updated permission"
-
-#         log_action(
-#             user=user,
-#             action=action,
-#             category=ActionCategory.CREATE if created else ActionCategory.UPDATE,
-#             obj=instance,
-#             metadata={"code": instance.code, "name": instance.name},
-#         )
-#     except Exception as e:
-#         import logging
-
-#         logger = logging.getLogger(__name__)
-#         logger.debug(f"Failed to log permission change: {str(e)}")
-
-
 @receiver(post_save, sender=Permission)
 def log_permission_changes(sender, instance, created, **kwargs):
     """Log permission changes with validation"""
@@ -99,57 +68,6 @@ def log_permission_deletion(sender, instance, **kwargs):
 
         logger = logging.getLogger(__name__)
         logger.debug(f"Failed to log permission deletion: {str(e)}")
-
-
-# @receiver(post_save, sender=Role)
-# def log_role_changes(sender, instance, created, **kwargs):
-#     """Log role creation/updates with proper transaction handling and validation"""
-
-#     def _create_log():
-#         try:
-#             # Validate content type exists
-#             ContentType.objects.get_for_model(Role)
-
-#             user = User.get_current_user()
-
-#             # Skip if no user context or user not saved
-#             if not user or not user.pk:
-#                 return
-
-#             # Double-check user exists in database
-#             if not User.objects.filter(pk=user.pk).exists():
-#                 return
-
-#             action = "Created role" if created else "Updated role"
-
-#             # Create log with error handling
-#             log_action(
-#                 user=user,
-#                 action=action,
-#                 category=ActionCategory.CREATE if created else ActionCategory.UPDATE,
-#                 obj=instance,
-#                 metadata={
-#                     "name": instance.name,
-#                     "role_type": instance.role_type,
-#                     "school": str(instance.school) if instance.school else None,
-#                 },
-#             )
-#         except Exception as e:
-#             import logging
-
-#             logger = logging.getLogger(__name__)
-#             logger.debug(f"Failed to log role change: {str(e)}")
-
-#     # Use transaction.on_commit to ensure all related objects are saved
-#     try:
-#         if transaction.get_connection().in_atomic_block:
-#             transaction.on_commit(_create_log)
-#         else:
-#             # If not in a transaction, execute immediately
-#             _create_log()
-#     except Exception:
-#         # Fallback to immediate execution
-#         _create_log()
 
 
 @receiver(post_save, sender=Role)
@@ -223,49 +141,6 @@ def log_role_deletion(sender, instance, **kwargs):
 
         logger = logging.getLogger(__name__)
         logger.debug(f"Failed to log role deletion: {str(e)}")
-
-
-# @receiver(m2m_changed, sender=Role.permissions.through)
-# def log_permission_assignments(sender, instance, action, pk_set, **kwargs):
-#     """Log permission assignments to roles with validation"""
-#     if action not in ["post_add", "post_remove", "post_clear"]:
-#         return
-
-#     try:
-#         # Validate content type exists
-#         ContentType.objects.get_for_model(Role)
-
-#         user = User.get_current_user()
-#         if not user or not user.pk:
-#             return
-
-#         # Verify user exists
-#         if not User.objects.filter(pk=user.pk).exists():
-#             return
-
-#         verb = {
-#             "post_add": "Added permissions to",
-#             "post_remove": "Removed permissions from",
-#             "post_clear": "Cleared all permissions from",
-#         }[action]
-
-#         permissions = Permission.objects.filter(pk__in=pk_set) if pk_set else []
-
-#         log_action(
-#             user=user,
-#             action=f"{verb} role {instance.name}",
-#             category=ActionCategory.UPDATE,
-#             obj=instance,
-#             metadata={
-#                 "affected_permissions": [p.code for p in permissions],
-#                 "total_permissions": instance.permissions.count(),
-#             },
-#         )
-#     except Exception as e:
-#         import logging
-
-#         logger = logging.getLogger(__name__)
-#         logger.debug(f"Failed to log permission assignment: {str(e)}")
 
 
 @receiver(m2m_changed, sender=Role.permissions.through)

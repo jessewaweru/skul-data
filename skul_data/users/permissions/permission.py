@@ -129,6 +129,11 @@ class HasRolePermission(BasePermission):
             if request.user.user_type == User.TEACHER:
                 return True
 
+        # Allow GET requests to list view for own profile
+        if request.method == "GET" and view.action == "list":
+            if user.user_type in [User.PARENT, User.TEACHER]:
+                return True
+
         # Primary school admin check
         if (
             hasattr(user, "school_admin_profile")

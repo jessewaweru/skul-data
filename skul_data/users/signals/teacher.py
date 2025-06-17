@@ -9,21 +9,6 @@ from skul_data.action_logs.utils.action_log import log_action
 User = get_user_model()
 
 
-# @receiver(pre_save, sender=Teacher)
-# def teacher_status_change(sender, instance, **kwargs):
-#     if instance.pk:
-#         original = Teacher.objects.get(pk=instance.pk)
-#         if original.status != instance.status:
-#             if instance.status == "TERMINATED":
-#                 # Deactivate user account when teacher is terminated
-#                 instance.user.is_active = False
-#                 instance.user.save()
-#             elif instance.status == "ACTIVE" and original.status == "TERMINATED":
-#                 # Reactivate user account if teacher is reinstated
-#                 instance.user.is_active = True
-#                 instance.user.save()
-
-
 @receiver(pre_save, sender=Teacher)
 def teacher_status_change(sender, instance, **kwargs):
     if not instance.pk:
