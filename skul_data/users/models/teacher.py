@@ -2,6 +2,7 @@ from django.db import models
 from .base_user import User
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
+import datetime
 
 
 class Teacher(models.Model):
@@ -40,6 +41,11 @@ class Teacher(models.Model):
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
+    is_administrator = models.BooleanField(default=False)
+    administrator_since = models.DateField(null=True, blank=True)
+    administrator_until = models.DateField(null=True, blank=True)
+    administrator_notes = models.TextField(blank=True, null=True)
+
     class Meta:
         ordering = ["user__last_name", "user__first_name"]
         verbose_name = "Teacher"
@@ -52,6 +58,15 @@ class Teacher(models.Model):
         if not self.pk:  # Only on creation
             self.user.user_type = User.TEACHER
             self.user.save()
+        super().save(*args, **kwargs)
+
+    def save(self, *args, **kwargs):
+        # Ensure date fields are pure dates
+        if isinstance(self.administrator_since, datetime.datetime):
+            self.administrator_since = self.administrator_since.date()
+        if isinstance(self.administrator_until, datetime.datetime):
+            self.administrator_until = self.administrator_until.date()
+
         super().save(*args, **kwargs)
 
     @property

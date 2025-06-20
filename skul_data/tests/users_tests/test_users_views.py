@@ -16,7 +16,14 @@ from skul_data.users.models.session import UserSession
 from skul_data.users.models.school_admin import SchoolAdmin
 from django.utils import timezone
 from django.contrib.sessions.models import Session
-
+from skul_data.users.models.base_user import User
+from skul_data.users.models.school_admin import AdministratorProfile
+from skul_data.users.models.teacher import Teacher
+from skul_data.tests.users_tests.test_helpers_admins import (
+    create_test_school,
+    create_test_teacher,
+)
+import random
 
 User = get_user_model()
 
@@ -394,6 +401,120 @@ class UserViewSetTest(APITestCase):
                 s["session_key"] == "test_session_123"
                 for s in response.data.get("sessions", [])
             )
+        )
+
+
+class UserAdministratorTest(APITestCase):
+    def setUp(self):
+        self.school, self.admin_user = create_test_school()
+        self.client.force_authenticate(user=self.admin_user)
+
+        # Generate unique suffix for this test
+        self.test_suffix = random.randint(1000, 9999)
+
+        # Create test users with unique usernames
+        self.teacher_user = create_test_teacher(
+            self.school, email=f"teacher{self.test_suffix}@test.com"
+        ).user
+
+        self.regular_user = User.objects.create_user(
+            email=f"regular{self.test_suffix}@test.com",
+            username=f"regular{self.test_suffix}",
+            password="testpass",
+            first_name="Regular",
+            last_name="User",
+            user_type=User.OTHER,
+        )
+
+        # URLs
+        self.make_admin_url = lambda user_id: reverse(
+            "user-make-administrator", args=[user_id]
+        )
+        self.remove_admin_url = lambda user_id: reverse(
+            "user-remove-administrator", args=[user_id]
+        )
+
+    def test_make_teacher_administrator(self):
+        response = self.client.post(self.make_admin_url(self.teacher_user.id))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Refresh teacher data
+        teacher = Teacher.objects.get(user=self.teacher_user)
+        self.assertTrue(teacher.is_administrator)
+        self.assertIsNotNone(teacher.administrator_since)
+
+    def test_make_regular_user_administrator(self):
+        response = self.client.post(
+            self.make_admin_url(self.regular_user.id),
+            {"position": "Test Administrator"},
+        )
+        print(f"Response: {response.status_code}, {response.data}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Check AdministratorProfile was created
+        self.assertTrue(
+            AdministratorProfile.objects.filter(user=self.regular_user).exists()
+        )
+        admin_profile = AdministratorProfile.objects.get(user=self.regular_user)
+        self.assertEqual(admin_profile.position, "Test Administrator")
+
+    def test_remove_teacher_administrator(self):
+        # First make the teacher an administrator
+        teacher = Teacher.objects.get(user=self.teacher_user)
+        teacher.is_administrator = True
+        teacher.save()
+
+        response = self.client.post(self.remove_admin_url(self.teacher_user.id))
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        teacher.refresh_from_db()
+        self.assertFalse(teacher.is_administrator)
+        self.assertIsNotNone(teacher.administrator_until)
+
+    def test_remove_administrator_profile(self):
+        # Create an administrator profile first
+        admin_profile = AdministratorProfile.objects.create(
+            user=self.regular_user, school=self.school, position="Test Admin"
+        )
+
+        response = self.client.post(self.remove_admin_url(self.regular_user.id))
+        print(f"Response: {response.status_code}, {response.data}")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Profile should be deleted
+        with self.assertRaises(AdministratorProfile.DoesNotExist):
+            AdministratorProfile.objects.get(id=admin_profile.id)
+
+        # User type should be reset
+        self.regular_user.refresh_from_db()
+        self.assertEqual(self.regular_user.user_type, User.OTHER)
+
+    def test_cannot_make_school_owner_administrator(self):
+        response = self.client.post(self.make_admin_url(self.admin_user.id))
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_teacher_cannot_make_administrator(self):
+        teacher = create_test_teacher(self.school)
+        self.client.force_authenticate(user=teacher.user)
+
+        response = self.client.post(self.make_admin_url(self.regular_user.id))
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_cross_school_admin_actions(self):
+        other_school, other_admin = create_test_school(name="Other School")
+        other_teacher = create_test_teacher(other_school)
+
+        # Try to make teacher from other school an administrator
+        response = self.client.post(self.make_admin_url(other_teacher.user.id))
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_url_patterns(self):
+        from django.urls import reverse
+
+        print("\n=== Actual URL patterns ===")
+        print("Make admin URL:", reverse("user-make-administrator", kwargs={"pk": 1}))
+        print(
+            "Remove admin URL:", reverse("user-remove-administrator", kwargs={"pk": 1})
         )
 
 

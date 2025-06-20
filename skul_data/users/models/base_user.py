@@ -49,12 +49,14 @@ class UserManager(BaseUserManager):
 
 class User(AbstractUser):
     SCHOOL_ADMIN = "school_admin"
+    ADMINISTRATOR = "administrator"
     TEACHER = "teacher"
     PARENT = "parent"
     OTHER = "other"
 
     USER_TYPE_CHOICES = [
         (SCHOOL_ADMIN, "School Administrator"),
+        (ADMINISTRATOR, "Administrator"),
         (TEACHER, "Teacher"),
         (PARENT, "Parent"),
         (OTHER, "Other"),
@@ -64,6 +66,9 @@ class User(AbstractUser):
         choices=USER_TYPE_CHOICES,
         default=SCHOOL_ADMIN,
     )
+    # Add a field to track if a teacher is also an administrator
+    is_administrator = models.BooleanField(default=False)
+
     # Unique tracking ID for all users
     user_tag = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     email = models.EmailField(unique=True)

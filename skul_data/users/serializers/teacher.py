@@ -12,6 +12,28 @@ from skul_data.students.serializers.student import SubjectSerializer
 from skul_data.schools.models.schoolclass import SchoolClass
 from skul_data.students.models.student import Subject
 from django.utils import timezone
+from datetime import datetime, date
+
+
+class DateFieldWithoutTime(serializers.DateField):
+    def to_representation(self, value):
+        if value is None:
+            return None
+
+        # Convert datetime to date if needed
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        elif isinstance(value, date):
+            return value.isoformat()
+
+        return super().to_representation(value)
+
+    def to_internal_value(self, data):
+        # Ensure we always return a date object
+        result = super().to_internal_value(data)
+        if isinstance(result, datetime):
+            return result.date()
+        return result
 
 
 class TeacherSerializer(serializers.ModelSerializer):
@@ -32,6 +54,12 @@ class TeacherSerializer(serializers.ModelSerializer):
     current_classes_ids = serializers.PrimaryKeyRelatedField(
         source="current_classes", many=True, read_only=True
     )
+    is_administrator = serializers.BooleanField()
+    # administrator_since = serializers.DateField(required=False)
+    # administrator_until = serializers.DateField(required=False)
+    administrator_since = DateFieldWithoutTime(required=False)
+    administrator_until = DateFieldWithoutTime(required=False)
+    administrator_notes = serializers.CharField(required=False)
 
     class Meta:
         model = Teacher
@@ -63,6 +91,10 @@ class TeacherSerializer(serializers.ModelSerializer):
             # "current_classes",
             "current_classes_ids",
             "last_login",
+            "is_administrator",
+            "administrator_since",
+            "administrator_until",
+            "administrator_notes",
             "created_at",
             "updated_at",
         ]

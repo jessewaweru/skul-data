@@ -48,11 +48,6 @@ class UserDetailSerializer(BaseUserSerializer):
     def get_teacher_profile(self, obj):
         if hasattr(obj, "teacher_profile"):
             return {
-                # "school": (
-                #     str(obj.teacher_profile.school.id)
-                #     if obj.teacher_profile.school
-                #     else None
-                # ),
                 "school": (
                     str(obj.teacher_profile.school)
                     if obj.teacher_profile.school

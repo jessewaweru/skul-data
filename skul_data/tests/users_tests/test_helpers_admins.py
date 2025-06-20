@@ -3,12 +3,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 import random
 from django.utils import timezone
 from django.contrib.auth import get_user_model
-from skul_data.users.models.teacher import (
-    Teacher,
-    TeacherAttendance,
-    TeacherWorkload,
-    TeacherDocument,
-)
+from skul_data.users.models.teacher import Teacher
 from skul_data.users.models.role import Role, Permission
 from skul_data.users.models.school_admin import SchoolAdmin, AdministratorProfile
 from skul_data.schools.models.school import School
@@ -18,9 +13,17 @@ User = get_user_model()
 
 def create_test_teacher(school, email="teacher@test.com", **kwargs):
     """Helper to create a test teacher with all required fields"""
+    if email is None:
+        # Generate unique email and username
+        random_suffix = random.randint(1000, 9999)
+        email = f"teacher{random_suffix}@test.com"
+
+    username = email.split("@")[0]
+
     user = User.objects.create_user(
         email=email,
-        username=email.split("@")[0],
+        # username=email.split("@")[0],
+        username=username,
         password="testpass",
         user_type=User.TEACHER,
         first_name=kwargs.get("first_name", "Test"),
@@ -50,44 +53,6 @@ def create_test_teacher(school, email="teacher@test.com", **kwargs):
         teacher.assigned_classes.set(kwargs["classes"])
 
     return teacher
-
-
-def create_test_teacher_workload(teacher, school_class, subject, **kwargs):
-    """Helper to create a teacher workload record"""
-    return TeacherWorkload.objects.create(
-        teacher=teacher,
-        school_class=school_class,
-        subject=subject,
-        hours_per_week=kwargs.get("hours_per_week", 10),
-        term=kwargs.get("term", "Term 1"),
-        school_year=kwargs.get("school_year", "2023"),
-    )
-
-
-def create_test_teacher_attendance(teacher, **kwargs):
-    """Helper to create a teacher attendance record"""
-    return TeacherAttendance.objects.create(
-        teacher=teacher,
-        date=kwargs.get("date", timezone.now().date()),
-        status=kwargs.get("status", "PRESENT"),
-        check_in=kwargs.get("check_in", timezone.now().time()),
-        check_out=kwargs.get("check_out", timezone.now().time()),
-        notes=kwargs.get("notes", "Test attendance"),
-        recorded_by=kwargs.get("recorded_by", teacher.user),
-    )
-
-
-def create_test_teacher_document(teacher, uploaded_by, **kwargs):
-    """Helper to create a teacher document"""
-    return TeacherDocument.objects.create(
-        teacher=teacher,
-        title=kwargs.get("title", "Test Document"),
-        document_type=kwargs.get("document_type", "QUALIFICATION"),
-        file=kwargs.get("file", SimpleUploadedFile("test.pdf", b"test content")),
-        description=kwargs.get("description", "Test document description"),
-        uploaded_by=uploaded_by,
-        is_confidential=kwargs.get("is_confidential", False),
-    )
 
 
 def create_school_admin_role(school):

@@ -89,15 +89,17 @@ class PermissionTests(TestCase):
         request = self.factory.get("/")
         request.user = regular_user
 
-        # Test with view that has required_permission
+        # Test with view that has required_permission and action attribute
         class TestView:
             required_permission = "test_perm"
+            action = None  # Add this to prevent AttributeError
 
         self.assertTrue(permission.has_permission(request, TestView()))
 
         # Test with view that has different required_permission
         class InvalidView:
             required_permission = "invalid_perm"
+            action = None  # Add this to prevent AttributeError
 
         self.assertFalse(permission.has_permission(request, InvalidView()))
 

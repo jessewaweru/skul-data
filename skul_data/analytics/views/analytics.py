@@ -293,6 +293,8 @@ class AnalyticsAlertViewSet(viewsets.ModelViewSet):
     filterset_fields = ["alert_type", "is_read", "school"]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return AnalyticsAlert.objects.none()
         return (
             super().get_queryset().filter(school=self.request.user.administered_school)
         )

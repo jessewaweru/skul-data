@@ -21,6 +21,8 @@ class NotificationViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Notification.objects.none()
         return Notification.objects.filter(user=self.request.user).order_by(
             "-created_at"
         )
@@ -47,6 +49,9 @@ class MessageViewSet(viewsets.ModelViewSet):
     pagination_class = PageNumberPagination
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Message.objects.none()
+
         if self.action == "sent":
             return (
                 Message.objects.filter(sender=self.request.user)

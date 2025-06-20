@@ -15,7 +15,10 @@ from skul_data.users.views.teacher import (
     TeacherAttendanceViewSet,
     TeacherDocumentViewSet,
 )
-from skul_data.users.views.school_admin import SchoolAdminViewSet
+from skul_data.users.views.school_admin import (
+    SchoolAdminViewSet,
+    AdministratorProfileViewSet,
+)
 from skul_data.users.views.base_user import UserViewSet
 
 router = DefaultRouter()
@@ -41,6 +44,9 @@ router.register(
     r"parent-status-changes", ParentStatusChangeViewSet, basename="parent-status-change"
 )
 router.register(r"school-admin", SchoolAdminViewSet, basename="school-admin")
+router.register(
+    r"administrators", AdministratorProfileViewSet, basename="administrator"
+)
 
 urlpatterns = [
     path("", include(router.urls)),
@@ -62,16 +68,6 @@ urlpatterns = [
         ParentViewSet.as_view({"get": "notifications"}),
         name="parent-notifications",
     ),
-    # path(
-    #     "parents/bulk-import/",
-    #     ParentViewSet.as_view({"post": "bulk_import"}),
-    #     name="parent-bulk-import",
-    # ),
-    # path(
-    #     "parents/download-template/",
-    #     ParentViewSet.as_view({"get": "download_template"}),
-    #     name="parent-download-template",
-    # ),
     # Custom teacher actions
     path(
         "teachers/<int:pk>/change-status/",

@@ -1,5 +1,7 @@
 from rest_framework import serializers
-from django.contrib.auth.models import Permission
+
+# from django.contrib.auth.models import Permission
+from skul_data.users.models.role import Permission
 from skul_data.users.models.role import Role
 from skul_data.schools.models.school import School
 

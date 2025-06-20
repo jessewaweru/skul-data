@@ -4,7 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model
 from django.db.models import Q
-
+from django.utils import timezone
 from skul_data.users.models.base_user import User
 from skul_data.users.serializers.base_user import (
     BaseUserSerializer,
@@ -15,6 +15,8 @@ from skul_data.users.permissions.permission import (
     ACCESS_ALL,
     SCHOOL_ADMIN_PERMISSIONS,
 )
+from django.utils import timezone
+from skul_data.users.models.school_admin import AdministratorProfile
 
 User = get_user_model()
 
@@ -42,13 +44,27 @@ class UserViewSet(viewsets.ModelViewSet):
         user = self.request.user
         queryset = super().get_queryset()
 
-        # School admins can see all users in their school
+        # School admins can see all users in their school + users they can manage
         if user.user_type == User.SCHOOL_ADMIN and hasattr(user, "school"):
-            return queryset.filter(
+            # Get users already connected to this school
+            school_connected_users = queryset.filter(
                 Q(school_admin_profile__school=user.school)
                 | Q(teacher_profile__school=user.school)
                 | Q(parent_profile__school=user.school)
-            ).distinct()
+                | Q(administrator_profile__school=user.school)
+            )
+
+            # For make_administrator functionality, also include OTHER users
+            # that don't belong to any school yet (can be managed by any school admin)
+            unconnected_users = queryset.filter(
+                user_type__in=[User.OTHER],
+                school_admin_profile__isnull=True,
+                teacher_profile__isnull=True,
+                parent_profile__isnull=True,
+                administrator_profile__isnull=True,
+            )
+
+            return (school_connected_users | unconnected_users).distinct()
 
         # Teachers can only see their own profile
         elif user.user_type == User.TEACHER:
@@ -152,3 +168,70 @@ class UserViewSet(viewsets.ModelViewSet):
             )
 
         return Response(permissions)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="make-administrator",
+        url_name="make-administrator",
+    )
+    def make_administrator(self, request, pk=None):
+        user = self.get_object()
+
+        # Prevent making school admin an administrator
+        if user.user_type == User.SCHOOL_ADMIN:
+            return Response(
+                {"error": "School owners cannot be made administrators"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Get the school from the requesting user (who should be a school admin)
+        requesting_user_school = request.user.school
+        if not requesting_user_school:
+            return Response(
+                {"error": "Cannot determine school context"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if user.user_type == User.TEACHER:
+            # For teachers, we'll use the is_administrator flag
+            teacher = user.teacher_profile
+            teacher.is_administrator = True
+            teacher.administrator_since = timezone.now().date()
+            teacher.save()
+        elif user.user_type not in [User.SCHOOL_ADMIN, User.ADMINISTRATOR]:
+            # For other users, create an AdministratorProfile
+            # Use the requesting user's school instead of target user's school
+            AdministratorProfile.objects.create(
+                user=user,
+                school=requesting_user_school,  # Use requesting user's school
+                position=request.data.get("position", "Administrator"),
+            )
+            # Update user type to ADMINISTRATOR
+            user.user_type = User.ADMINISTRATOR
+            user.save()
+
+        return Response({"status": "user promoted to administrator"})
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="remove-administrator",
+        url_name="remove-administrator",
+    )
+    def remove_administrator(self, request, pk=None):
+        user = self.get_object()
+
+        if user.user_type == User.TEACHER and hasattr(user, "teacher_profile"):
+            teacher = user.teacher_profile
+            teacher.is_administrator = False
+            teacher.administrator_until = timezone.now().date()
+            teacher.save()
+        elif user.user_type == User.ADMINISTRATOR and hasattr(
+            user, "administrator_profile"
+        ):
+            user.administrator_profile.delete()
+            user.user_type = User.OTHER  # Or whatever default you want
+            user.save()
+
+        return Response({"status": "administrator privileges removed"})
