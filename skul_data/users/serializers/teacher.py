@@ -55,8 +55,6 @@ class TeacherSerializer(serializers.ModelSerializer):
         source="current_classes", many=True, read_only=True
     )
     is_administrator = serializers.BooleanField()
-    # administrator_since = serializers.DateField(required=False)
-    # administrator_until = serializers.DateField(required=False)
     administrator_since = DateFieldWithoutTime(required=False)
     administrator_until = DateFieldWithoutTime(required=False)
     administrator_notes = serializers.CharField(required=False)

@@ -5,6 +5,7 @@ from django.db import transaction
 import threading
 import logging
 from skul_data.users.models.base_user import User
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -19,18 +20,17 @@ def set_test_mode(enabled=True):
     _TEST_MODE = enabled
 
 
-# 1. Enhanced log_action utility with better error handling
 def log_action(user, action, category, obj=None, metadata=None):
     """
     Helper function to manually log actions with robust error handling
     """
-    # # Skip logging in test environment
-    # if "test" in sys.argv or "TEST" in os.environ:
-    #     return None
+    # Check both global test mode AND Django settings
+    test_mode_enabled = _TEST_MODE or getattr(settings, "ACTION_LOG_TEST_MODE", False)
 
     # Skip logging only if not in test mode (unless test mode is explicitly enabled)
-    if not _TEST_MODE and ("test" in sys.argv or "TEST" in os.environ):
+    if not test_mode_enabled and ("test" in sys.argv or "TEST" in os.environ):
         return None
+
     try:
         # Validate user exists and is saved
         if user and user.pk:
@@ -111,20 +111,20 @@ def log_action_async(user, action, category, obj=None, metadata=None):
     """
     Non-blocking action logger for high-frequency operations.
     Queues the log to be created after the current transaction succeeds.
-
-    Args:
-        Same as log_action()
     """
-    global _TEST_MODE
+    test_mode_enabled = _TEST_MODE or getattr(settings, "ACTION_LOG_TEST_MODE", False)
 
     def create_log():
         try:
             log_action(user, action, category, obj, metadata)
         except Exception as e:
+            import logging
+
+            logger = logging.getLogger(__name__)
             logger.error(f"Async action log failed: {str(e)}")
 
     # In test mode, always execute synchronously regardless of transaction state
-    if _TEST_MODE:
+    if test_mode_enabled:
         create_log()
         return
 

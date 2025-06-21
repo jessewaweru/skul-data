@@ -508,14 +508,5 @@ class UserAdministratorTest(APITestCase):
         response = self.client.post(self.make_admin_url(other_teacher.user.id))
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
-    def test_url_patterns(self):
-        from django.urls import reverse
-
-        print("\n=== Actual URL patterns ===")
-        print("Make admin URL:", reverse("user-make-administrator", kwargs={"pk": 1}))
-        print(
-            "Remove admin URL:", reverse("user-remove-administrator", kwargs={"pk": 1})
-        )
-
 
 # python manage.py test skul_data.tests.users_tests.test_users_views

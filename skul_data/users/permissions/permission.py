@@ -5,15 +5,6 @@ from skul_data.users.models.teacher import Teacher
 # === BROAD ROLE CHECKS ===
 
 
-# New permission classes
-# class IsSchoolAdmin(BasePermission):
-#     def has_permission(self, request, view):
-#         return (
-#             request.user.is_authenticated
-#             and request.user.user_type == User.SCHOOL_ADMIN
-#         )
-
-
 class IsSchoolAdmin(BasePermission):
     """Only for the primary school owner (SchoolAdmin)"""
 
@@ -32,38 +23,6 @@ class IsPrimaryAdmin(BasePermission):
             request.user.is_authenticated
             and request.user.school_admin_profile.is_primary
         )
-
-
-# class IsAdministrator(BasePermission):
-#     def has_permission(self, request, view):
-#         return (
-#             request.user.is_authenticated
-#             and request.user.user_type == User.SCHOOL_ADMIN
-#             and request.user.is_staff
-#         )
-
-
-# class IsAdministrator(BasePermission):
-#     def has_permission(self, request, view):
-#         return request.user.is_authenticated and (
-#             request.user.user_type == User.ADMINISTRATOR
-#             or (
-#                 request.user.user_type == User.TEACHER and request.user.is_administrator
-#             )
-#         )
-
-
-# class IsAdministrator(BasePermission):
-#     """For both standalone administrators and teacher-administrators"""
-
-#     def has_permission(self, request, view):
-#         return request.user.is_authenticated and (
-#             request.user.user_type == User.ADMINISTRATOR
-#             or (
-#                 request.user.user_type == User.TEACHER
-#                 and getattr(request.user, "is_administrator", False)
-#             )
-#         )
 
 
 class IsAdministrator(BasePermission):
@@ -85,11 +44,6 @@ class IsAdministrator(BasePermission):
                 return False
 
         return False
-
-
-# class IsTeacher(BasePermission):
-#     def has_permission(self, request, view):
-#         return request.user.is_authenticated and request.user.user_type == "teacher"
 
 
 class IsTeacher(BasePermission):
@@ -140,126 +94,6 @@ class CanManageEvent(BasePermission):
 
         # Default deny
         return False
-
-
-# === FLEXIBLE, DYNAMIC PERMISSION CHECK ===
-
-# class HasRolePermission(BasePermission):
-#     """
-#     This permission checks if a user's role (via Role model) has a specific permission key.
-#     The view should define required permissions in these formats:
-
-#     - required_permission = 'view_calendar'  # For all methods
-#     - required_permission_get = 'view_calendar'  # For GET only
-#     - required_permission_post = 'create_calendar'  # For POST only
-#     etc.
-#     """
-
-#     def has_permission(self, request, view):
-#         user = request.user
-
-#         if not user.is_authenticated:
-#             return False
-
-#         # Staff and school admins always have permission
-#         if user.is_staff or user.user_type == User.SCHOOL_ADMIN:
-#             return True
-
-#         # ADDED: Special handling for attendance marking by teachers
-#         if (
-#             hasattr(view, "action")
-#             and view.action == "mark_attendance"
-#             and user.user_type == User.TEACHER
-#         ):
-#             # Teachers can mark attendance for their own classes
-#             # The object-level check will verify they own the class
-#             return True
-
-#         # Allow parents to view their own profile
-#         if request.method == "GET" and view.action == "retrieve":
-#             if user.user_type == User.PARENT:
-#                 return True
-
-#         # Allow teachers to view their own profile
-#         if request.method == "GET" and view.action == "retrieve":
-#             if request.user.user_type == User.TEACHER:
-#                 return True
-
-#         # Allow GET requests to list view for own profile
-#         if request.method == "GET" and view.action == "list":
-#             if user.user_type in [User.PARENT, User.TEACHER]:
-#                 return True
-
-#         # Primary school admin check
-#         if (
-#             hasattr(user, "school_admin_profile")
-#             and user.school_admin_profile.is_primary
-#         ):
-#             return True
-
-#         # Get the required permission from the view
-#         # First check for method-specific permissions
-#         method = request.method.lower()
-#         method_permission = getattr(view, f"required_permission_{method}", None)
-
-#         # Fall back to general permission if method-specific not found
-#         required_permission = method_permission or getattr(
-#             view, "required_permission", None
-#         )
-
-#         if not required_permission:
-#             return False  # No permission defined = deny by default
-
-#         # No role means no permissions
-#         role = getattr(user, "role", None)
-#         if not role:
-#             return False
-
-#         # Check if the required permission is in the role's permissions
-#         return role.permissions.filter(code=required_permission).exists()
-
-#     def has_object_permission(self, request, view, obj):
-#         # Staff and school admins always have permission
-#         if request.user.is_staff or request.user.user_type == User.SCHOOL_ADMIN:
-#             return True
-
-#         # ADDED: For attendance objects, check if teacher owns the class
-#         if (
-#             hasattr(view, "action")
-#             and view.action == "mark_attendance"
-#             and request.user.user_type == User.TEACHER
-#         ):
-#             # Check if this teacher is assigned to the class
-#             if hasattr(obj, "school_class"):
-#                 return obj.school_class.class_teacher == request.user.teacher_profile
-
-#         # Primary school admin check
-#         if (
-#             hasattr(request.user, "school_admin_profile")
-#             and request.user.school_admin_profile.is_primary
-#         ):
-#             return True
-
-#         # Check if the user is the owner of the object
-#         owner_field = getattr(view, "owner_field", "user")
-#         if hasattr(obj, owner_field) and getattr(obj, owner_field) == request.user:
-#             return True
-
-#         # For parents trying to view their own profile
-#         if request.user.user_type == User.PARENT and view.action == "retrieve":
-#             return obj.user == request.user
-
-#         # Check general permission (role-based)
-#         has_general_permission = self.has_permission(request, view)
-
-#         # For teachers, they should only be able to view their own profile
-#         if request.user.user_type == User.TEACHER:
-#             return False  # If they got here, it's not their profile
-
-#         # if request.user.user_type == User.TEACHER:
-#         #     return self.has_permission(request, view)
-
-#         return has_general_permission
 
 
 class HasRolePermission(BasePermission):

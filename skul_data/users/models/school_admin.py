@@ -73,7 +73,20 @@ class AdministratorProfile(models.Model):
         return f"{self.user.get_full_name()} - {self.position}"
 
     def save(self, *args, **kwargs):
-        if not self.pk:  # Only on creation
+        # Track changed fields for updates
+        if self.pk:
+            try:
+                old = AdministratorProfile.objects.get(pk=self.pk)
+                self._changed_fields = [
+                    field.name
+                    for field in self._meta.fields
+                    if getattr(old, field.name) != getattr(self, field.name)
+                ]
+            except AdministratorProfile.DoesNotExist:
+                self._changed_fields = []
+        else:
+            # For new instances, set user type
             self.user.user_type = User.ADMINISTRATOR
             self.user.save()
+
         super().save(*args, **kwargs)

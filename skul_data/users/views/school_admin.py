@@ -18,6 +18,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
 from rest_framework.response import Response
 from skul_data.users.permissions.permission import IsAdministrator, IsSchoolAdmin
+from skul_data.action_logs.utils.action_log import log_action
+from skul_data.action_logs.models.action_log import ActionCategory
 
 
 class SchoolAdminViewSet(viewsets.ModelViewSet):
@@ -53,7 +55,6 @@ class SchoolAdminViewSet(viewsets.ModelViewSet):
 class AdministratorProfileViewSet(viewsets.ModelViewSet):
     queryset = AdministratorProfile.objects.filter(is_active=True)
     serializer_class = AdministratorProfileSerializer
-    # permission_classes = [IsSchoolAdmin | IsAdministrator]
     permission_classes = [IsAuthenticated, (IsSchoolAdmin | IsAdministrator)]
     filter_backends = [
         DjangoFilterBackend,
@@ -95,16 +96,95 @@ class AdministratorProfileViewSet(viewsets.ModelViewSet):
 
         return queryset.none()
 
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        old_permissions = instance.permissions_granted.copy()
+        old_access_level = instance.access_level
+        old_position = instance.position
+
+        response = super().update(request, *args, **kwargs)
+        instance.refresh_from_db()
+
+        # Check if permissions were changed
+        if "permissions_granted" in request.data:
+            new_permissions = instance.permissions_granted
+            added = list(set(new_permissions) - set(old_permissions))
+            removed = list(set(old_permissions) - set(new_permissions))
+
+            if added or removed:
+                log_action(
+                    user=request.user,
+                    action=f"Updated permissions for administrator {instance.user.get_full_name()}",
+                    category=ActionCategory.UPDATE,
+                    obj=instance,
+                    metadata={
+                        "action_type": "ADMIN_PERMISSIONS_UPDATE",
+                        "added_permissions": added,
+                        "removed_permissions": removed,
+                        "current_permissions": new_permissions,
+                        "school_id": instance.school.id,
+                    },
+                )
+
+        # Log access level changes
+        if old_access_level != instance.access_level:
+            log_action(
+                user=request.user,
+                action=f"Changed access level for administrator {instance.user.get_full_name()}",
+                category=ActionCategory.UPDATE,
+                obj=instance,
+                metadata={
+                    "action_type": "ADMIN_ACCESS_LEVEL_CHANGE",
+                    "previous_level": old_access_level,
+                    "new_level": instance.access_level,
+                    "school_id": instance.school.id,
+                },
+            )
+
+        # Log position changes
+        if old_position != instance.position:
+            log_action(
+                user=request.user,
+                action=f"Changed position for administrator {instance.user.get_full_name()}",
+                category=ActionCategory.UPDATE,
+                obj=instance,
+                metadata={
+                    "action_type": "ADMIN_POSITION_CHANGE",
+                    "previous_position": old_position,
+                    "new_position": instance.position,
+                    "school_id": instance.school.id,
+                },
+            )
+
+        return response
+
     @action(detail=True, methods=["post"])
     def deactivate(self, request, pk=None):
         administrator = self.get_object()
+        old_status = administrator.is_active
+
         administrator.is_active = False
         administrator.save()
 
         # Optionally change user type if needed
         user = administrator.user
-        user.user_type = User.OTHER  # Or whatever default you want
+        user.user_type = User.OTHER
         user.save()
+
+        # Log the deactivation
+        log_action(
+            user=request.user,
+            action=f"Deactivated administrator {user.get_full_name()}",
+            category=ActionCategory.UPDATE,
+            obj=administrator,
+            metadata={
+                "action_type": "ADMIN_DEACTIVATION",
+                "previous_status": old_status,
+                "new_status": False,
+                "position": administrator.position,
+                "school_id": administrator.school.id,
+            },
+        )
 
         return Response({"status": "administrator deactivated"})
 

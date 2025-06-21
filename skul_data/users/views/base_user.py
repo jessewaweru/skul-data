@@ -17,6 +17,8 @@ from skul_data.users.permissions.permission import (
 )
 from django.utils import timezone
 from skul_data.users.models.school_admin import AdministratorProfile
+from skul_data.action_logs.utils.action_log import log_action
+from skul_data.action_logs.models.action_log import ActionCategory
 
 User = get_user_model()
 
@@ -199,10 +201,25 @@ class UserViewSet(viewsets.ModelViewSet):
             teacher.is_administrator = True
             teacher.administrator_since = timezone.now().date()
             teacher.save()
+
+            # Log the action
+            log_action(
+                user=request.user,
+                action=f"Made teacher {user.get_full_name()} an administrator",
+                category=ActionCategory.UPDATE,
+                obj=teacher,
+                metadata={
+                    "action_type": "TEACHER_TO_ADMIN",
+                    "administrator_since": teacher.administrator_since.isoformat(),
+                    "previous_status": False,
+                    "new_status": True,
+                    "school_id": requesting_user_school.id,
+                },
+            )
+
         elif user.user_type not in [User.SCHOOL_ADMIN, User.ADMINISTRATOR]:
             # For other users, create an AdministratorProfile
-            # Use the requesting user's school instead of target user's school
-            AdministratorProfile.objects.create(
+            admin_profile = AdministratorProfile.objects.create(
                 user=user,
                 school=requesting_user_school,  # Use requesting user's school
                 position=request.data.get("position", "Administrator"),
@@ -210,6 +227,20 @@ class UserViewSet(viewsets.ModelViewSet):
             # Update user type to ADMINISTRATOR
             user.user_type = User.ADMINISTRATOR
             user.save()
+
+            # Log the action
+            log_action(
+                user=request.user,
+                action=f"Made user {user.get_full_name()} an administrator",
+                category=ActionCategory.CREATE,
+                obj=admin_profile,
+                metadata={
+                    "action_type": "USER_TO_ADMIN",
+                    "position": admin_profile.position,
+                    "access_level": admin_profile.access_level,
+                    "school_id": requesting_user_school.id,
+                },
+            )
 
         return Response({"status": "user promoted to administrator"})
 
@@ -221,17 +252,51 @@ class UserViewSet(viewsets.ModelViewSet):
     )
     def remove_administrator(self, request, pk=None):
         user = self.get_object()
+        requesting_user_school = request.user.school
 
         if user.user_type == User.TEACHER and hasattr(user, "teacher_profile"):
             teacher = user.teacher_profile
+            previous_status = teacher.is_administrator
             teacher.is_administrator = False
             teacher.administrator_until = timezone.now().date()
             teacher.save()
+
+            # Log the action
+            log_action(
+                user=request.user,
+                action=f"Removed administrator status from teacher {user.get_full_name()}",
+                category=ActionCategory.UPDATE,
+                obj=teacher,
+                metadata={
+                    "action_type": "REMOVE_ADMIN_FROM_TEACHER",
+                    "previous_status": previous_status,
+                    "new_status": False,
+                    "administrator_until": teacher.administrator_until.isoformat(),
+                    "school_id": requesting_user_school.id,
+                },
+            )
+
         elif user.user_type == User.ADMINISTRATOR and hasattr(
             user, "administrator_profile"
         ):
-            user.administrator_profile.delete()
-            user.user_type = User.OTHER  # Or whatever default you want
+            admin_profile = user.administrator_profile
+
+            # Log before deletion
+            log_action(
+                user=request.user,
+                action=f"Removed administrator status from user {user.get_full_name()}",
+                category=ActionCategory.DELETE,
+                obj=admin_profile,
+                metadata={
+                    "action_type": "REMOVE_ADMIN_FROM_USER",
+                    "position": admin_profile.position,
+                    "access_level": admin_profile.access_level,
+                    "school_id": requesting_user_school.id,
+                },
+            )
+
+            admin_profile.delete()
+            user.user_type = User.OTHER
             user.save()
 
         return Response({"status": "administrator privileges removed"})

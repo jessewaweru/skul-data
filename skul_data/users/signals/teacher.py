@@ -1,8 +1,9 @@
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from skul_data.users.models.teacher import Teacher
-from skul_data.users.models.role import Role, Permission
+from skul_data.users.models.role import Permission
 from skul_data.action_logs.models.action_log import ActionCategory
 from skul_data.action_logs.utils.action_log import log_action
 
@@ -75,7 +76,7 @@ def assign_teacher_permissions(sender, instance, created, **kwargs):
         user.user_type = User.TEACHER
 
         # Get or create the permission
-        from skul_data.users.models.base_user import Role
+        from skul_data.users.models.role import Role
 
         perm, _ = Permission.objects.get_or_create(
             code="manage_attendance", defaults={"name": "Manage Attendance"}
@@ -98,3 +99,71 @@ def assign_teacher_permissions(sender, instance, created, **kwargs):
         if user.role != role:
             user.role = role
             user.save()
+
+
+@receiver(pre_save, sender=Teacher)
+def log_teacher_admin_status(sender, instance, **kwargs):
+    """Log changes to teacher's administrator status"""
+    if not instance.pk:  # New instance, no previous state
+        return
+
+    try:
+        old_instance = Teacher.objects.get(pk=instance.pk)
+        if old_instance.is_administrator != instance.is_administrator:
+            # Get the current user
+            from skul_data.users.models.base_user import User
+
+            user = User.get_current_user()
+
+            if user:
+                action = (
+                    f"Made teacher {instance.user.get_full_name()} an administrator"
+                    if instance.is_administrator
+                    else f"Removed administrator status from teacher {instance.user.get_full_name()}"
+                )
+
+                # Debug print
+                print(
+                    f"DEBUG: old_status={old_instance.is_administrator}, new_status={instance.is_administrator}"
+                )
+
+                def create_log():
+                    try:
+                        log_action(
+                            user=user,
+                            action=action,
+                            category=ActionCategory.UPDATE,
+                            obj=instance,
+                            metadata={
+                                "action_type": "TEACHER_ADMIN_STATUS_CHANGE",
+                                "previous_status": old_instance.is_administrator,
+                                "new_status": instance.is_administrator,
+                                "administrator_since": (
+                                    instance.administrator_since.isoformat()
+                                    if instance.is_administrator
+                                    and instance.administrator_since
+                                    else None
+                                ),
+                                "administrator_until": (
+                                    instance.administrator_until.isoformat()
+                                    if not instance.is_administrator
+                                    and instance.administrator_until
+                                    else None
+                                ),
+                                "school_id": (
+                                    instance.school.id if instance.school else None
+                                ),
+                            },
+                        )
+                    except Exception as e:
+                        print(f"DEBUG: Logging failed: {e}")
+
+                # For tests, execute immediately without transaction.on_commit
+                from skul_data.action_logs.utils.action_log import _TEST_MODE
+
+                if _TEST_MODE:
+                    create_log()
+                else:
+                    transaction.on_commit(create_log)
+    except Teacher.DoesNotExist:
+        pass  # Instance doesn't exist yet
