@@ -22,8 +22,13 @@ DEBUG = True
 
 ALLOWED_HOSTS = []
 
-CORS_ALLOW_ALL_ORIGINS = True
+# CORS_ALLOW_ALL_ORIGINS = True
 
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+CORS_ALLOW_CREDENTIALS = True
 
 # Application definition
 
@@ -46,6 +51,7 @@ PROJECT_APPS = [
     "skul_data.action_logs",
     "skul_data.scheduler",
     "skul_data.analytics",
+    "skul_data.school_timetables",
 ]
 
 THIRD_PARTY_APPS = [
@@ -69,6 +75,7 @@ REST_FRAMEWORK = {
 }
 
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -78,7 +85,6 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "skul_data.action_logs.middleware.action_log.ActionLogMiddleware",
     "skul_data.users.models.base_user.CurrentUserMiddleware",
-    "corsheaders.middleware.CorsMiddleware",
 ]
 
 ROOT_URLCONF = "skul_data.skul_data_main.urls"

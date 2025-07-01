@@ -43,7 +43,7 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
         "school",
     ]
     search_fields = ["name", "room_number"]
-    permission_classes = [HasRolePermission]
+    # permission_classes = [HasRolePermission]
 
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:
@@ -52,13 +52,13 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
             return SchoolClassPromoteSerializer
         return SchoolClassSerializer
 
-    def get_permissions(self):
-        if self.action in ["create", "update", "destroy", "promote", "assign_teacher"]:
-            return [IsAdministrator()]
-        elif self.action in ["retrieve", "list", "analytics"]:
-            # Allow both admins and teachers
-            return [IsAuthenticated(), HasRolePermission()]
-        return [IsAuthenticated()]
+    # def get_permissions(self):
+    #     if self.action in ["create", "update", "destroy", "promote", "assign_teacher"]:
+    #         return [IsAdministrator()]
+    #     elif self.action in ["retrieve", "list", "analytics"]:
+    #         # Allow both admins and teachers
+    #         return [IsAuthenticated(), HasRolePermission()]
+    #     return [IsAuthenticated()]
 
     # Set required permissions for HasRolePermission
     required_permission_get = "view_classes"

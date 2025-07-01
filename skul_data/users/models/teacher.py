@@ -54,21 +54,6 @@ class Teacher(models.Model):
     def __str__(self):
         return f"{self.user.get_full_name()} - {self.school.name}"
 
-    # def save(self, *args, **kwargs):
-    #     if not self.pk:  # Only on creation
-    #         self.user.user_type = User.TEACHER
-    #         self.user.save()
-    #     super().save(*args, **kwargs)
-
-    # def save(self, *args, **kwargs):
-    #     # Ensure date fields are pure dates
-    #     if isinstance(self.administrator_since, datetime.datetime):
-    #         self.administrator_since = self.administrator_since.date()
-    #     if isinstance(self.administrator_until, datetime.datetime):
-    #         self.administrator_until = self.administrator_until.date()
-
-    #     super().save(*args, **kwargs)
-
     def save(self, *args, **kwargs):
         # Only set user type on creation
         if not self.pk:

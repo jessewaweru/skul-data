@@ -49,5 +49,13 @@ urlpatterns = [
     path("reports/", include("skul_data.reports.urls")),
     path("analytics/", include("skul_data.analytics.urls")),
     path("logs/", include("skul_data.action_logs.urls")),
+    # path("school_timetables/", include("skul_data.school_timetables.urls")),
+    path(
+        "school_timetables/",
+        include(
+            ("skul_data.school_timetables.urls", "school_timetables"),
+            namespace="school_timetables",
+        ),
+    ),
     path("notifications/", include("skul_data.notifications.urls")),
 ]

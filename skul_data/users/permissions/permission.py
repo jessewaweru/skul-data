@@ -120,30 +120,29 @@ class HasRolePermission(BasePermission):
         ):
             return True
 
-        # 2. Check administrator permissions (both standalone and teacher-administrators)
+        required_permission = self._get_required_permission(view, request.method)
+        if not required_permission:
+            return False
+
+        # 2. Administrator permissions (both standalone and teacher-administrators)
         if user.user_type == User.ADMINISTRATOR or (
             user.user_type == User.TEACHER
             and hasattr(user, "teacher_profile")
             and user.teacher_profile.is_administrator
         ):
-            # First check if they have the permission directly granted
+            # Check administrator_profile permissions first
             if hasattr(user, "administrator_profile"):
-                if hasattr(
-                    user.administrator_profile, "permissions_granted"
-                ) and self._check_required_permission(
-                    view, request.method, user.administrator_profile.permissions_granted
+                if required_permission in getattr(
+                    user.administrator_profile, "permissions_granted", []
                 ):
                     return True
 
-            # Then check their role permissions
-            role = getattr(user, "role", None)
-            if role and self._check_required_permission(
-                view, request.method, role.permissions.values_list("code", flat=True)
-            ):
-                return True
+            # Then check role permissions
+            if hasattr(user, "role") and user.role:
+                if user.role.permissions.filter(code=required_permission).exists():
+                    return True
 
         # 3. Special cases (keep your existing special handling)
-        # Attendance marking by teachers
         if (
             hasattr(view, "action")
             and view.action == "mark_attendance"
@@ -151,7 +150,6 @@ class HasRolePermission(BasePermission):
         ):
             return True
 
-        # Profile viewing permissions - safely check for action attribute
         if request.method == "GET":
             view_action = getattr(view, "action", None)
             if view_action == "retrieve":
@@ -161,24 +159,21 @@ class HasRolePermission(BasePermission):
                 if user.user_type in [User.PARENT, User.TEACHER]:
                     return True
 
-        # 4. Standard role permission check
-        required_permission = self._get_required_permission(view, request.method)
-        if not required_permission:
-            return False  # No permission defined = deny by default
+        # 4. Standard role permission check (for non-administrators)
+        if hasattr(user, "role") and user.role:
+            return user.role.permissions.filter(code=required_permission).exists()
 
-        # Check role permissions
-        role = getattr(user, "role", None)
-        if not role:
-            return False
-
-        return role.permissions.filter(code=required_permission).exists()
+        return False
 
     def _get_required_permission(self, view, method):
         """Helper to get the required permission from the view"""
         # First check for method-specific permissions
-        method_permission = getattr(view, f"required_permission_{method}", None)
+        method_permission_attr = f"required_permission_{method.lower()}"
+        if hasattr(view, method_permission_attr):
+            return getattr(view, method_permission_attr)
+
         # Fall back to general permission if method-specific not found
-        return method_permission or getattr(view, "required_permission", None)
+        return getattr(view, "required_permission", None)
 
     def _check_required_permission(self, view, method, permission_codes):
         """Helper to check if permission exists in given list"""
@@ -293,4 +288,20 @@ SCHOOL_ADMIN_PERMISSIONS = [
     ("manage_users", "Create/manage school users"),
     ("manage_academics", "Manage academic structure"),
     ("view_reports", "View all school reports"),
+]
+# Additional permissions for timetables
+VIEW_TIMETABLES = "view_timetables"
+MANAGE_TIMETABLES = "manage_timetables"
+GENERATE_TIMETABLES = "generate_timetables"
+VIEW_TEACHER_TIMETABLES = "view_teacher_timetables"
+VIEW_TIMETABLE_SETTINGS = "view_timetable_settings"
+MANAGE_TIMETABLE_SETTINGS = "manage_timetable_settings"
+
+DEFAULT_TIMETABLE_PERMISSIONS = [
+    (VIEW_TIMETABLES, "Can view school timetables"),
+    (MANAGE_TIMETABLES, "Can create and edit timetables"),
+    (GENERATE_TIMETABLES, "Can generate timetables automatically"),
+    (VIEW_TEACHER_TIMETABLES, "Can view teacher timetables"),
+    (VIEW_TIMETABLE_SETTINGS, "Can view timetable settings and structures"),
+    (MANAGE_TIMETABLE_SETTINGS, "Can manage timetable settings and structures"),
 ]
