@@ -47,7 +47,7 @@ class TeacherViewSet(viewsets.ModelViewSet):
         "payroll_number",
     ]
     required_permission = "manage_teachers"
-    permission_classes = [IsAuthenticated, HasRolePermission]
+    # permission_classes = [IsAuthenticated, HasRolePermission]
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -73,26 +73,56 @@ class TeacherViewSet(viewsets.ModelViewSet):
     required_permission_patch = "update_teacher"  # Used for partial_update action
     required_permission_delete = "manage_teachers"  # Used for delete action
 
+    # def get_queryset(self):
+    #     queryset = super().get_queryset()
+    #     user = self.request.user
+
+    #     if user.user_type == User.SCHOOL_ADMIN:
+    #         return queryset
+
+    #     school = getattr(user, "school", None)
+    #     if not school:
+    #         return Teacher.objects.none()
+
+    #     queryset = queryset.filter(school=school)
+
+    #     # Teachers can only see their own profile
+    #     if user.user_type == "teacher":
+    #         return queryset.filter(user=user)
+
+    #     return queryset.select_related("user", "school").prefetch_related(
+    #         "subjects_taught", "assigned_classes"
+    #     )
+
     def get_queryset(self):
+        print(f"TeacherViewSet request params: {self.request.query_params}")
+        print(f"Authenticated user: {self.request.user}")
+        print(
+            f"User school admin profile: {getattr(self.request.user, 'school_admin_profile', None)}"
+        )
         queryset = super().get_queryset()
         user = self.request.user
 
+        # Get school filter from query params
+        school_id = self.request.query_params.get("school")
+        school_code = self.request.query_params.get("school_code")
+
+        # First try to filter by explicit parameters
+        if school_code:
+            return queryset.filter(school__code=school_code)
+        if school_id:
+            return queryset.filter(school_id=school_id)
+
+        # For school admins, auto-filter to their school
         if user.user_type == User.SCHOOL_ADMIN:
-            return queryset
+            if (
+                hasattr(user, "school_admin_profile")
+                and user.school_admin_profile.school
+            ):
+                return queryset.filter(school=user.school_admin_profile.school)
 
-        school = getattr(user, "school", None)
-        if not school:
-            return Teacher.objects.none()
-
-        queryset = queryset.filter(school=school)
-
-        # Teachers can only see their own profile
-        if user.user_type == "teacher":
-            return queryset.filter(user=user)
-
-        return queryset.select_related("user", "school").prefetch_related(
-            "subjects_taught", "assigned_classes"
-        )
+        # For other authenticated users, return none unless they have permissions
+        return queryset.none()
 
     def perform_create(self, serializer):
         school = self.request.user.school
@@ -290,6 +320,26 @@ class TeacherViewSet(viewsets.ModelViewSet):
 
     # Add specific required permission for analytics action
     analytics.required_permission = "view_analytics"
+
+    def list(self, request, *args, **kwargs):
+        # Debug prints
+        print("\n=== TeacherViewSet Debug ===")
+        print(
+            f"Authenticated User: {request.user} (ID: {request.user.id if request.user.is_authenticated else None})"
+        )
+        print(f"User Type: {getattr(request.user, 'user_type', None)}")
+        print(f"Query Params: {request.query_params}")
+        print(f"School Filter: {request.query_params.get('school')}")
+
+        # Print SQL query that will be executed
+        queryset = self.filter_queryset(self.get_queryset())
+        print(f"SQL Query: {str(queryset.query)}")
+
+        response = super().list(request, *args, **kwargs)
+
+        # Print response data (be careful with large datasets)
+        print(f"Response Data Count: {len(response.data)}")
+        return response
 
 
 class TeacherWorkloadViewSet(viewsets.ModelViewSet):

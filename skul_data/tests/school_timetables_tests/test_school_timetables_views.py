@@ -1,4 +1,3 @@
-# tests/views/test_timetable_views.py
 from django.test import TestCase
 from rest_framework.test import APIClient, APIRequestFactory
 from rest_framework import status

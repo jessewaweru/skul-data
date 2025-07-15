@@ -95,10 +95,18 @@ class UserViewSet(viewsets.ModelViewSet):
             user.set_password(self.request.data["password"])
             user.save()
 
+    # @action(detail=False, methods=["get"])
+    # def me(self, request):
+    #     """Get the current user's profile"""
+    #     serializer = self.get_serializer(request.user)
+    #     return Response(serializer.data)
+
     @action(detail=False, methods=["get"])
     def me(self, request):
         """Get the current user's profile"""
         serializer = self.get_serializer(request.user)
+        # Add debug logging
+        print(f"User me endpoint data: {serializer.data}")
         return Response(serializer.data)
 
     @action(detail=True, methods=["post"])

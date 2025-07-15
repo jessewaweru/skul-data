@@ -1,4 +1,3 @@
-# tests/models/test_timetable_models.py
 from django.test import TestCase
 from django.core.exceptions import ValidationError
 from datetime import time
@@ -104,15 +103,6 @@ class TimetableModelTest(TestCase):
         create_test_timetable(self.school_class)
         with self.assertRaises(Exception):
             create_test_timetable(self.school_class)
-
-    # def test_active_timetable_validation(self):
-    #     # Create an active timetable
-    #     active_timetable = create_test_timetable(self.school_class, is_active=True)
-
-    #     # Try to create another active timetable
-    #     with self.assertRaises(ValidationError):
-    #         another_timetable = create_test_timetable(self.school_class, is_active=True)
-    #         another_timetable.full_clean()
 
     def test_active_timetable_validation(self):
         # Create an active timetable

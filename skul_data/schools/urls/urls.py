@@ -12,7 +12,7 @@ from skul_data.schools.views.schoolclass import (
     ClassAttendanceViewSet,
 )
 from skul_data.schools.views.schoolstream import SchoolStreamViewSet
-
+from skul_data.schools.views.school import school_teachers
 
 router = DefaultRouter()
 router.register(r"students", SchoolViewSet)
@@ -28,4 +28,5 @@ router.register(r"security-logs", SecurityLogViewSet, basename="securitylog")
 
 urlpatterns = [
     path("", include(router.urls)),
+    path("<int:school_id>/teachers/", school_teachers, name="school-teachers"),
 ]

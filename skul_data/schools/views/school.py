@@ -3,7 +3,8 @@ from skul_data.schools.serializers.school import SchoolSerializer
 from skul_data.schools.models.school import School, SchoolSubscription, SecurityLog
 from skul_data.users.models.base_user import User
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.response import Response
 from skul_data.users.permissions.permission import IsPrimaryAdmin
 from rest_framework.exceptions import PermissionDenied
 from rest_framework import permissions
@@ -12,6 +13,8 @@ from skul_data.schools.serializers.school import (
     SecurityLogSerializer,
 )
 from skul_data.users.permissions.permission import IsPrimaryAdmin, IsSchoolAdmin
+from skul_data.users.models.teacher import Teacher
+from skul_data.users.serializers.teacher import TeacherSerializer
 
 
 class SchoolViewSet(viewsets.ModelViewSet):
@@ -39,9 +42,9 @@ class SchoolViewSet(viewsets.ModelViewSet):
     #         qs = qs.filter(administrators__user=self.request.user)
     #     return qs
 
-    def perform_create(self, serializer):
-        # This will be handled by the SchoolRegistrationSerializer instead
-        raise PermissionDenied("Schools can only be created via registration endpoint")
+    # def perform_create(self, serializer):
+    #     # This will be handled by the SchoolRegistrationSerializer instead
+    #     raise PermissionDenied("Schools can only be created via registration endpoint")
 
 
 class SchoolSubscriptionViewSet(viewsets.ModelViewSet):
@@ -73,3 +76,13 @@ class SecurityLogViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         return SecurityLog.objects.filter(user=self.request.user).order_by("-timestamp")
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def school_teachers(request, school_id):
+    teachers = Teacher.objects.filter(school_id=school_id).select_related("user")
+    serializer = TeacherSerializer(teachers, many=True)
+    return Response(
+        {"school_id": school_id, "count": teachers.count(), "teachers": serializer.data}
+    )

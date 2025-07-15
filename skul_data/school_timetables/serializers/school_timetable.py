@@ -105,12 +105,15 @@ class LessonSerializer(serializers.ModelSerializer):
 
 
 class TimetableConstraintSerializer(serializers.ModelSerializer):
+    category = serializers.CharField(read_only=True)
+
     class Meta:
         model = TimetableConstraint
         fields = [
             "id",
             "school",
             "constraint_type",
+            "category",
             "is_hard_constraint",
             "parameters",
             "description",
@@ -118,7 +121,20 @@ class TimetableConstraintSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at", "category"]
+
+    def validate(self, data):
+        constraint_type = data.get("constraint_type")
+        parameters = data.get("parameters", {})
+
+        # Validate parameters for specific constraint types
+        if constraint_type == "SUBJECT_GROUPING":
+            if not parameters.get("subject_group"):
+                raise serializers.ValidationError(
+                    "Subject grouping requires a subject group ID"
+                )
+
+        return data
 
 
 class SubjectGroupSerializer(serializers.ModelSerializer):

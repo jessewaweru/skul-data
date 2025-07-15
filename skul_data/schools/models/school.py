@@ -51,6 +51,8 @@ class School(models.Model):
         on_delete=models.PROTECT,
         related_name="administered_school",
         default=None,
+        null=True,
+        blank=True,
     )
     # Status
     is_active = models.BooleanField(default=True)

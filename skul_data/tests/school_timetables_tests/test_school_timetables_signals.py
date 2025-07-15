@@ -1,8 +1,6 @@
-# tests/signals/test_timetable_signals.py
 from django.test import TestCase
 from skul_data.tests.school_timetables_tests.test_helpers import (
     create_test_timetable,
-    create_test_lesson,
     create_test_school,
     create_test_class,
     create_test_subject,

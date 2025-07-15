@@ -208,7 +208,7 @@ class TimetableViewSet(viewsets.ModelViewSet):
         )
 
     def _generate_timetable(self, school_class, academic_year, term, apply_constraints):
-        """Generate a timetable for a single class"""
+        """Generate a timetable for a single class with constraints"""
         # Create the timetable
         timetable = Timetable.objects.create(
             school_class=school_class,
@@ -219,9 +219,9 @@ class TimetableViewSet(viewsets.ModelViewSet):
 
         # Get the school's timetable structure
         structure = TimetableStructure.objects.get(school=school_class.school)
-        time_slots = TimeSlot.objects.filter(
-            school=school_class.school, is_break=False
-        ).order_by("day_of_week", "order")
+        time_slots = TimeSlot.objects.filter(school=school_class.school).order_by(
+            "day_of_week", "order"
+        )
 
         # Get all subjects for the class
         subjects = school_class.subjects.all()
@@ -235,19 +235,32 @@ class TimetableViewSet(viewsets.ModelViewSet):
             if teachers.exists():
                 subject_teachers[subject.id] = list(teachers)
 
-        # Apply constraints if requested
-        constraints = []
+        # Get active constraints if requested
+        constraints = {}
         if apply_constraints:
-            constraints = TimetableConstraint.objects.filter(
+            for constraint in TimetableConstraint.objects.filter(
                 school=school_class.school, is_active=True
-            )
+            ):
+                constraints[constraint.constraint_type] = constraint
 
-        # Simple random scheduling (replace with proper algorithm)
+        # Track scheduled lessons for constraint checking
         scheduled_lessons = []
+
+        # First pass - schedule all mandatory breaks
         for time_slot in time_slots:
-            # Skip if no subjects left
-            if not subjects:
-                break
+            if time_slot.is_break:
+                scheduled_lessons.append(
+                    {
+                        "time_slot": time_slot,
+                        "is_break": True,
+                        "break_name": time_slot.break_name,
+                    }
+                )
+
+        # Second pass - schedule subjects
+        for time_slot in time_slots:
+            if time_slot.is_break:
+                continue  # Skip break slots
 
             # Get available subjects (those not yet fully scheduled)
             available_subjects = [
@@ -260,36 +273,177 @@ class TimetableViewSet(viewsets.ModelViewSet):
             if not available_subjects:
                 continue
 
-            # Randomly select a subject
-            subject = random.choice(available_subjects)
+            # Try to schedule each available subject until one fits
+            for subject in available_subjects:
+                # Get available teachers for this subject
+                available_teachers = subject_teachers.get(subject.id, [])
+                if not available_teachers:
+                    continue
 
-            # Get available teachers for this subject
-            available_teachers = subject_teachers.get(subject.id, [])
-            if not available_teachers:
-                continue
+                # Try each teacher until one fits
+                for teacher in available_teachers:
+                    # Check if this lesson would violate any constraints
+                    if not self._check_constraints(
+                        constraints,
+                        timetable,
+                        subject,
+                        teacher,
+                        time_slot,
+                        scheduled_lessons,
+                    ):
+                        continue  # Skip if constraints would be violated
 
-            teacher = random.choice(available_teachers)
+                    # Create the lesson
+                    lesson = Lesson.objects.create(
+                        timetable=timetable,
+                        subject=subject,
+                        teacher=teacher,
+                        time_slot=time_slot,
+                    )
+                    scheduled_lessons.append(
+                        {
+                            "lesson": lesson,
+                            "time_slot": time_slot,
+                            "subject": subject,
+                            "teacher": teacher,
+                        }
+                    )
+                    break  # Move to next time slot after successful scheduling
 
-            # Check for teacher clashes
+        return timetable
+
+    def _check_constraints(
+        self, constraints, timetable, subject, teacher, time_slot, scheduled_lessons
+    ):
+        """Check if a potential lesson would violate any constraints"""
+        school = timetable.school_class.school
+        # Retrieve the timetable structure for use in constraints
+        structure = TimetableStructure.objects.get(school=school)
+
+        # 1. Check teacher constraints
+        if "NO_TEACHER_CLASH" in constraints:
             teacher_clash = Lesson.objects.filter(
-                timetable__school_class__school=school_class.school,
+                timetable__school_class__school=school,
                 time_slot=time_slot,
                 teacher=teacher,
             ).exists()
-
             if teacher_clash:
-                continue
+                return False
 
-            # Create the lesson
-            lesson = Lesson.objects.create(
-                timetable=timetable,
-                subject=subject,
-                teacher=teacher,
+        if "NO_TEACHER_SAME_SUBJECT_CLASH" in constraints:
+            same_subject_clash = Lesson.objects.filter(
+                timetable__school_class__school=school,
                 time_slot=time_slot,
-            )
-            scheduled_lessons.append(lesson)
+                teacher=teacher,
+                subject=subject,
+            ).exists()
+            if same_subject_clash:
+                return False
 
-        return timetable
+        # 2. Check class constraints
+        if "NO_CLASS_CLASH" in constraints:
+            class_clash = Lesson.objects.filter(
+                timetable=timetable, time_slot=time_slot
+            ).exists()
+            if class_clash:
+                return False
+
+        # 3. Check subject constraints
+        if "NO_CORE_AFTER_LUNCH" in constraints and time_slot.is_after_lunch():
+            if subject.name in ["Mathematics", "English", "Kiswahili"]:
+                return False
+
+        if "NO_DOUBLE_CORE" in constraints:
+            if subject.name in ["Mathematics", "English", "Kiswahili"]:
+                # Check if previous slot was same core subject
+                prev_lesson = Lesson.objects.filter(
+                    timetable=timetable, time_slot__order=time_slot.order - 1
+                ).first()
+                if prev_lesson and prev_lesson.subject.name == subject.name:
+                    return False
+
+        if "MATH_NOT_AFTER_SCIENCE" in constraints and subject.name == "Mathematics":
+            prev_lesson = Lesson.objects.filter(
+                timetable=timetable, time_slot__order=time_slot.order - 1
+            ).first()
+            if prev_lesson and prev_lesson.subject.name in [
+                "Biology",
+                "Physics",
+                "Chemistry",
+                "Science",
+            ]:
+                return False
+
+        if "MATH_MORNING_ONLY" in constraints and subject.name == "Mathematics":
+            if not time_slot.is_morning():
+                return False
+
+        if "ENGLISH_KISWAHILI_SEPARATE" in constraints:
+            if subject.name in ["English", "Kiswahili"]:
+                prev_lesson = Lesson.objects.filter(
+                    timetable=timetable, time_slot__order=time_slot.order - 1
+                ).first()
+                if prev_lesson and prev_lesson.subject.name in ["English", "Kiswahili"]:
+                    return False
+
+        # 4. Check subject grouping
+        if "SUBJECT_GROUPING" in constraints:
+            group_id = constraints["SUBJECT_GROUPING"].parameters.get("subject_group")
+            if group_id:
+                group = SubjectGroup.objects.filter(id=group_id).first()
+                if group and subject in group.subjects.all():
+                    # Check if any other subject from this group is already scheduled
+                    group_subjects = group.subjects.exclude(id=subject.id)
+                    group_lesson = Lesson.objects.filter(
+                        timetable=timetable, subject__in=group_subjects
+                    ).exists()
+                    if group_lesson:
+                        return False
+
+        # 5. Check science double period (for 8-4-4 only)
+        if "SCIENCE_DOUBLE_PERIOD" in constraints:
+            if structure.curriculum == "8-4-4" and subject.name in [
+                "Biology",
+                "Physics",
+                "Chemistry",
+            ]:
+                # Check if we need to schedule a double period
+                science_lessons = Lesson.objects.filter(
+                    timetable=timetable, subject=subject
+                ).count()
+                if science_lessons == 0:  # First science lesson of the week
+                    # Check if next time slot is available for double period
+                    next_slot = TimeSlot.objects.filter(
+                        school=school,
+                        day_of_week=time_slot.day_of_week,
+                        order=time_slot.order + 1,
+                        is_break=False,
+                    ).first()
+                    if (
+                        next_slot
+                        and not Lesson.objects.filter(
+                            timetable=timetable, time_slot=next_slot
+                        ).exists()
+                    ):
+                        # Schedule double period
+                        lesson = Lesson.objects.create(
+                            timetable=timetable,
+                            subject=subject,
+                            teacher=teacher,
+                            time_slot=next_slot,
+                            is_double_period=True,
+                        )
+                        scheduled_lessons.append(
+                            {
+                                "lesson": lesson,
+                                "time_slot": next_slot,
+                                "subject": subject,
+                                "teacher": teacher,
+                                "is_double_period": True,
+                            }
+                        )
+
+        return True  # All constraints passed
 
     @action(detail=False, methods=["post"])
     def clone(self, request):
@@ -414,20 +568,44 @@ class LessonViewSet(viewsets.ModelViewSet):
 class TimetableConstraintViewSet(viewsets.ModelViewSet):
     queryset = TimetableConstraint.objects.all()
     serializer_class = TimetableConstraintSerializer
-    permission_classes = [IsAuthenticated, HasRolePermission]
+    # permission_classes = [IsAuthenticated, HasRolePermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     filterset_fields = ["school", "constraint_type", "is_hard_constraint", "is_active"]
     search_fields = ["description"]
     required_permission = "manage_timetable_settings"
 
+    # def get_queryset(self):
+    #     queryset = super().get_queryset()
+    #     user = self.request.user
+
+    #     if user.user_type == "school_admin":
+    #         return queryset.filter(school=user.school_admin_profile.school)
+    #     elif hasattr(user, "administrator_profile"):
+    #         return queryset.filter(school=user.administrator_profile.school)
+
+    #     return queryset.none()
+
     def get_queryset(self):
         queryset = super().get_queryset()
-        user = self.request.user
+        school_code = self.request.query_params.get("school")
+        school_id = self.request.query_params.get("school_id")
 
-        if user.user_type == "school_admin":
+        # Try to get school by code first
+        if school_code:
+            try:
+                return queryset.filter(school__code=school_code)
+            except ValueError:
+                # Handle case where code is invalid
+                return queryset.none()
+
+        # Fall back to school ID if provided
+        if school_id:
+            return queryset.filter(school_id=school_id)
+
+        # For authenticated users, try to get school from profile
+        user = self.request.user
+        if hasattr(user, "school_admin_profile") and user.school_admin_profile.school:
             return queryset.filter(school=user.school_admin_profile.school)
-        elif hasattr(user, "administrator_profile"):
-            return queryset.filter(school=user.administrator_profile.school)
 
         return queryset.none()
 
@@ -436,9 +614,6 @@ class SubjectGroupViewSet(viewsets.ModelViewSet):
     queryset = SubjectGroup.objects.all()
     serializer_class = SubjectGroupSerializer
     permission_classes = [IsAuthenticated, HasRolePermission]
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    filterset_fields = ["school"]
-    search_fields = ["name", "description"]
     required_permission = "manage_timetable_settings"
 
     def get_queryset(self):
@@ -451,6 +626,37 @@ class SubjectGroupViewSet(viewsets.ModelViewSet):
             return queryset.filter(school=user.administrator_profile.school)
 
         return queryset.none()
+
+    @action(detail=True, methods=["post"])
+    def assign_to_constraint(self, request, pk=None):
+        """Assign this subject group to a timetable constraint"""
+        subject_group = self.get_object()
+        constraint_id = request.data.get("constraint_id")
+
+        if not constraint_id:
+            return Response(
+                {"error": "constraint_id is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            constraint = TimetableConstraint.objects.get(
+                id=constraint_id,
+                school=subject_group.school,
+                constraint_type="SUBJECT_GROUPING",
+            )
+            constraint.parameters = {"subject_group": subject_group.id}
+            constraint.save()
+
+            return Response(
+                {"status": f"Subject group assigned to constraint {constraint.id}"},
+                status=status.HTTP_200_OK,
+            )
+        except TimetableConstraint.DoesNotExist:
+            return Response(
+                {"error": "Constraint not found or not a subject grouping constraint"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
 
 class TeacherAvailabilityViewSet(viewsets.ModelViewSet):

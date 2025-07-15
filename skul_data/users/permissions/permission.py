@@ -107,6 +107,7 @@ class HasRolePermission(BasePermission):
     """
 
     def has_permission(self, request, view):
+        print(f"Checking permission for {request.user}")
         user = request.user
 
         if not user.is_authenticated:

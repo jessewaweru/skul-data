@@ -864,24 +864,41 @@ class StudentAttendanceViewSet(viewsets.ModelViewSet):
 class SubjectViewSet(viewsets.ModelViewSet):
     queryset = Subject.objects.all()
     serializer_class = SubjectSerializer
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["school"]
 
     def get_permissions(self):
         if self.action in ["create", "update", "partial_update", "destroy"]:
             return [IsAdministrator()]
         return [IsAuthenticated()]
 
+    # def get_queryset(self):
+    #     queryset = super().get_queryset()
+    #     user = self.request.user
+
+    #     if user.user_type == User.SCHOOL_ADMIN:
+    #         return queryset
+
+    #     school = getattr(user, "school", None)
+    #     if not school:
+    #         return Subject.objects.none()
+
+    #     return queryset.filter(Q(school=school) | Q(school__isnull=True))
+
     def get_queryset(self):
         queryset = super().get_queryset()
-        user = self.request.user
+        school_code = self.request.query_params.get(
+            "school_id"
+        )  # Frontend sends school_id
 
-        if user.user_type == User.SCHOOL_ADMIN:
-            return queryset
+        if school_code:
+            try:
+                # Filter by school code instead of ID
+                return queryset.filter(school__code=school_code)
+            except School.DoesNotExist:
+                return queryset.none()
 
-        school = getattr(user, "school", None)
-        if not school:
-            return Subject.objects.none()
-
-        return queryset.filter(Q(school=school) | Q(school__isnull=True))
+        return queryset.none()
 
     def perform_create(self, serializer):
         instance = serializer.save(school=self.request.user.school)

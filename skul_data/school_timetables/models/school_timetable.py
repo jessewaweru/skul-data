@@ -4,6 +4,7 @@ from django.contrib.postgres.fields import ArrayField
 from skul_data.schools.models.schoolclass import SchoolClass
 from skul_data.users.models.teacher import Teacher
 from skul_data.students.models.student import Subject
+from datetime import datetime, date
 
 
 class TimeSlot(models.Model):
@@ -42,6 +43,21 @@ class TimeSlot(models.Model):
     break_name = models.CharField(max_length=50, blank=True, null=True)
     order = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
+
+    def is_morning(self):
+        """Check if this time slot is in the morning (before 12pm)"""
+        return self.end_time.hour < 12
+
+    def is_after_lunch(self):
+        """Check if this time slot is after lunch (after 1pm)"""
+        return self.start_time.hour >= 13
+
+    def is_double_period(self):
+        """Check if this is a double period slot"""
+        duration = datetime.combine(date.today(), self.end_time) - datetime.combine(
+            date.today(), self.start_time
+        )
+        return duration.total_seconds() >= 5400
 
     class Meta:
         unique_together = ("school", "start_time", "end_time", "day_of_week")
@@ -97,6 +113,18 @@ class TimetableStructure(models.Model):
     lunch_duration = models.PositiveIntegerField(
         default=60, help_text="Duration of lunch break in minutes"
     )
+    include_games = models.BooleanField(
+        default=True, help_text="Include games period in the timetable"
+    )
+    games_duration = models.PositiveIntegerField(
+        default=45, help_text="Duration of games period in minutes"
+    )
+    include_preps = models.BooleanField(
+        default=False, help_text="Include preps period for boarding schools"
+    )
+    preps_duration = models.PositiveIntegerField(
+        default=60, help_text="Duration of preps period in minutes"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -107,15 +135,17 @@ class TimetableStructure(models.Model):
         ordering = ["-created_at"]
 
     def generate_time_slots(self):
-        """Generate standard time slots based on the structure"""
+        """Generate standard time slots with all breaks and special periods"""
         from datetime import datetime, time, timedelta
 
         TimeSlot.objects.filter(school=self.school).delete()
 
-        # Calculate periods
+        # Calculate durations
         period_duration = timedelta(minutes=self.period_duration)
         break_duration = timedelta(minutes=self.break_duration)
         lunch_duration = timedelta(minutes=self.lunch_duration)
+        games_duration = timedelta(minutes=self.games_duration)
+        preps_duration = timedelta(minutes=self.preps_duration)
 
         for day in self.days_of_week:
             current_time = datetime.combine(datetime.today(), self.default_start_time)
@@ -124,7 +154,7 @@ class TimetableStructure(models.Model):
 
             # Morning session
             while current_time + period_duration <= datetime.combine(
-                datetime.today(), time(12, 0)
+                datetime.today(), time(10, 0)
             ):
                 TimeSlot.objects.create(
                     school=self.school,
@@ -137,15 +167,15 @@ class TimetableStructure(models.Model):
                 current_time += period_duration
                 period_number += 1
 
-            # Morning break
+            # Short break
             TimeSlot.objects.create(
                 school=self.school,
-                name="Morning Break",
+                name="Short Break",
                 start_time=current_time.time(),
                 end_time=(current_time + break_duration).time(),
                 day_of_week=day,
                 is_break=True,
-                break_name="Morning Break",
+                break_name="Short Break",
                 order=period_number,
             )
             current_time += break_duration
@@ -153,7 +183,7 @@ class TimetableStructure(models.Model):
 
             # Pre-lunch session
             while current_time + period_duration <= datetime.combine(
-                datetime.today(), time(13, 0)
+                datetime.today(), time(12, 30)
             ):
                 TimeSlot.objects.create(
                     school=self.school,
@@ -181,7 +211,9 @@ class TimetableStructure(models.Model):
             period_number += 1
 
             # Afternoon session
-            while current_time + period_duration <= end_time:
+            while current_time + period_duration <= datetime.combine(
+                datetime.today(), time(15, 0)
+            ):
                 TimeSlot.objects.create(
                     school=self.school,
                     name=f"Period {period_number}",
@@ -192,6 +224,34 @@ class TimetableStructure(models.Model):
                 )
                 current_time += period_duration
                 period_number += 1
+
+            # Games period (if enabled)
+            if self.include_games and current_time + games_duration <= end_time:
+                TimeSlot.objects.create(
+                    school=self.school,
+                    name="Games",
+                    start_time=current_time.time(),
+                    end_time=(current_time + games_duration).time(),
+                    day_of_week=day,
+                    is_break=True,
+                    break_name="Games",
+                    order=period_number,
+                )
+                current_time += games_duration
+                period_number += 1
+
+            # Preps period (if enabled)
+            if self.include_preps and current_time + preps_duration <= end_time:
+                TimeSlot.objects.create(
+                    school=self.school,
+                    name="Preps",
+                    start_time=current_time.time(),
+                    end_time=(current_time + preps_duration).time(),
+                    day_of_week=day,
+                    is_break=True,
+                    break_name="Preps",
+                    order=period_number,
+                )
 
 
 class Timetable(models.Model):
@@ -249,53 +309,136 @@ class Lesson(models.Model):
 
 
 class TimetableConstraint(models.Model):
-    """Constraints/rules for timetable generation"""
+    """Predefined constraints/rules for timetable generation"""
 
     CONSTRAINT_TYPE_CHOICES = [
-        ("NO_TEACHER_CLASH", "No teacher double booking"),
-        ("NO_CLASS_CLASH", "No class subject overlap"),
-        ("SUBJECT_PAIRING", "Subject pairing"),
-        ("SCIENCE_DOUBLE", "Science double period"),
-        ("NO_AFTERNOON_SCIENCE", "No science in afternoon"),
-        ("MAX_PERIODS_PER_DAY", "Maximum periods per day"),
-        ("MIN_PERIODS_BETWEEN", "Minimum periods between subjects"),
-        ("TEACHER_AVAILABILITY", "Teacher availability"),
-        ("ROOM_AVAILABILITY", "Room availability"),
-        ("SUBJECT_PREFERENCE", "Subject time preference"),
+        # Teacher-related constraints
+        (
+            "NO_TEACHER_CLASH",
+            "No teacher double booking (same teacher in multiple classes at same time)",
+        ),
+        (
+            "NO_TEACHER_SAME_SUBJECT_CLASH",
+            "No same subject teaching at same time by same teacher",
+        ),
+        # Class-related constraints
+        (
+            "NO_CLASS_CLASH",
+            "No class subject overlap (one subject per class per time slot)",
+        ),
+        # Subject-related constraints
+        (
+            "SCIENCE_DOUBLE_PERIOD",
+            "Science subjects must have one double period per week (8-4-4 only)",
+        ),
+        (
+            "NO_CORE_AFTER_LUNCH",
+            "Core subjects (English, Kiswahili, Math) not after lunch",
+        ),
+        ("NO_DOUBLE_CORE", "No double lessons for core subjects"),
+        ("MATH_NOT_AFTER_SCIENCE", "Mathematics must not follow science subjects"),
+        ("MATH_MORNING_ONLY", "Mathematics must always be in the morning"),
+        (
+            "ENGLISH_KISWAHILI_SEPARATE",
+            "English and Kiswahili must not follow each other",
+        ),
+        # Subject grouping constraints
+        ("SUBJECT_GROUPING", "Group subjects that students don't take together"),
+        # Structural constraints
+        (
+            "MANDATORY_BREAKS",
+            "Include mandatory breaks (short break, long break, lunch)",
+        ),
+        ("INCLUDE_GAMES", "Include games period"),
+        ("INCLUDE_PREPS", "Include preps period (boarding schools)"),
+    ]
+
+    CONSTRAINT_CATEGORIES = [
+        ("TEACHER", "Teacher Constraints"),
+        ("SUBJECT", "Subject Constraints"),
+        ("STRUCTURE", "Structural Constraints"),
     ]
 
     school = models.ForeignKey(
         "schools.School", on_delete=models.CASCADE, related_name="timetable_constraints"
     )
-    constraint_type = models.CharField(max_length=50, choices=CONSTRAINT_TYPE_CHOICES)
-    is_hard_constraint = models.BooleanField(default=True)
-    parameters = models.JSONField(default=dict)
-    description = models.TextField(blank=True, null=True)
+    constraint_type = models.CharField(
+        max_length=50,
+        choices=CONSTRAINT_TYPE_CHOICES,
+        help_text="Select from predefined constraint types",
+    )
+    category = models.CharField(
+        max_length=10, choices=CONSTRAINT_CATEGORIES, blank=True, null=True
+    )
+    is_hard_constraint = models.BooleanField(
+        default=True,
+        help_text="Hard constraints cannot be violated. Soft constraints are preferred but not required",
+    )
+    parameters = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Additional parameters for the constraint (e.g., subject groups)",
+    )
+    description = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Explanation of how this constraint will be applied",
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["is_hard_constraint", "constraint_type"]
+        ordering = ["category", "constraint_type"]
+        verbose_name = "Timetable Constraint"
+        verbose_name_plural = "Timetable Constraints"
 
     def __str__(self):
         return f"{self.get_constraint_type_display()} ({'Hard' if self.is_hard_constraint else 'Soft'})"
 
-    def clean(self):
-        if self.constraint_type == "SUBJECT_PAIRING" and not self.parameters.get(
-            "subjects"
-        ):
-            raise ValidationError("Subject pairing requires a list of subject IDs")
-        if self.constraint_type == "MAX_PERIODS_PER_DAY" and not self.parameters.get(
-            "max_periods"
-        ):
-            raise ValidationError("Max periods per day requires a maximum number")
-        if self.constraint_type == "MIN_PERIODS_BETWEEN" and not all(
-            key in self.parameters for key in ["subject_id", "min_periods"]
-        ):
-            raise ValidationError(
-                "Min periods between requires subject_id and min_periods"
-            )
+    def save(self, *args, **kwargs):
+        # Automatically set category based on constraint type
+        if self.constraint_type in [
+            "NO_TEACHER_CLASH",
+            "NO_TEACHER_SAME_SUBJECT_CLASH",
+        ]:
+            self.category = "TEACHER"
+        elif self.constraint_type in [
+            "SCIENCE_DOUBLE_PERIOD",
+            "NO_CORE_AFTER_LUNCH",
+            "NO_DOUBLE_CORE",
+            "MATH_NOT_AFTER_SCIENCE",
+            "MATH_MORNING_ONLY",
+            "ENGLISH_KISWAHILI_SEPARATE",
+            "SUBJECT_GROUPING",
+        ]:
+            self.category = "SUBJECT"
+        else:
+            self.category = "STRUCTURE"
+
+        # Set default descriptions for each constraint type
+        if not self.description:
+            self.description = self.get_default_description()
+
+        super().save(*args, **kwargs)
+
+    def get_default_description(self):
+        descriptions = {
+            "NO_TEACHER_CLASH": "Ensures a teacher is not scheduled in multiple classes at the same time",
+            "NO_TEACHER_SAME_SUBJECT_CLASH": "Prevents same teacher teaching same subject in different classes simultaneously",
+            "NO_CLASS_CLASH": "Ensures only one subject is scheduled per class at any time",
+            "SCIENCE_DOUBLE_PERIOD": "Science subjects must have one double period per week (for 8-4-4 curriculum)",
+            "NO_CORE_AFTER_LUNCH": "Core subjects (English, Kiswahili, Math) cannot be scheduled after lunch",
+            "NO_DOUBLE_CORE": "Core subjects cannot have double periods",
+            "MATH_NOT_AFTER_SCIENCE": "Mathematics lessons cannot be scheduled immediately after science subjects",
+            "MATH_MORNING_ONLY": "Mathematics must be scheduled in morning sessions only",
+            "ENGLISH_KISWAHILI_SEPARATE": "English and Kiswahili lessons cannot be scheduled consecutively",
+            "SUBJECT_GROUPING": "Groups subjects that students don't take together (e.g., Business, Computer, Agriculture)",
+            "MANDATORY_BREAKS": "Ensures timetable includes short break, long break and lunch break",
+            "INCLUDE_GAMES": "Includes games period in the timetable",
+            "INCLUDE_PREPS": "Includes preps period for boarding schools",
+        }
+        return descriptions.get(self.constraint_type, "")
 
 
 class SubjectGroup(models.Model):

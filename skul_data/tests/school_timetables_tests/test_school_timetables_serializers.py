@@ -1,4 +1,3 @@
-# tests/serializers/test_timetable_serializers.py
 from django.test import TestCase
 from rest_framework.exceptions import ValidationError
 from skul_data.tests.school_timetables_tests.test_helpers import (

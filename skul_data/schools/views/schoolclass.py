@@ -43,7 +43,7 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
         "school",
     ]
     search_fields = ["name", "room_number"]
-    # permission_classes = [HasRolePermission]
+    permission_classes = [IsAuthenticated, HasRolePermission]
 
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:
@@ -76,29 +76,12 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
         # Get school for admin
         if user.user_type == User.SCHOOL_ADMIN:
             try:
-                # Access the related SchoolAdmin object and its school
-                admin_profile = SchoolAdmin.objects.get(user=user)
-                school = admin_profile.school
-                print(f"Admin school from profile: {school}")
+                admin_profile = user.school_admin_profile
+                return queryset.filter(school=admin_profile.school)
             except SchoolAdmin.DoesNotExist:
-                print("SchoolAdmin profile not found")
                 return SchoolClass.objects.none()
-        else:
-            school = getattr(user, "school", None)
 
-        if not school:
-            print("No school found for user")
-            return SchoolClass.objects.none()
-
-        # Filter by school
-        queryset = queryset.filter(school=school)
-        print(f"Filtered queryset count: {queryset.count()}")
-
-        # Additional filtering for teachers
-        if user.user_type == "teacher":
-            queryset = queryset.filter(class_teacher=user.teacher_profile)
-
-        return queryset
+        return SchoolClass.objects.none()
 
     def perform_create(self, serializer):
         """Override to add logging for class creation"""

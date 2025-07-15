@@ -28,34 +28,49 @@ urlpatterns = [
         name="schema-swagger-ui",
     ),
     path("redoc/", schema_view.with_ui("redoc", cache_timeout=0), name="schema-redoc"),
-    # Your existing URLs
+    # Admin
     path("admin/", admin.site.urls),
-    path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
-    path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
-    path("users/", include("skul_data.users.urls")),
+    # API routes with /api/ prefix
     path(
-        "schools/",
-        include(("skul_data.schools.urls", "schools"), namespace="schools"),
-    ),
-    path("students/", include("skul_data.students.urls")),
-    path(
-        "scheduler/",
-        include(("skul_data.scheduler.urls", "scheduler"), namespace="scheduler"),
-    ),
-    path(
-        "documents/",
-        include(("skul_data.documents.urls", "documents"), namespace="documents"),
-    ),
-    path("reports/", include("skul_data.reports.urls")),
-    path("analytics/", include("skul_data.analytics.urls")),
-    path("logs/", include("skul_data.action_logs.urls")),
-    # path("school_timetables/", include("skul_data.school_timetables.urls")),
-    path(
-        "school_timetables/",
+        "api/",
         include(
-            ("skul_data.school_timetables.urls", "school_timetables"),
-            namespace="school_timetables",
+            [
+                # Authentication
+                path("token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
+                path(
+                    "token/refresh/", TokenRefreshView.as_view(), name="token_refresh"
+                ),
+                # App routes
+                path("users/", include("skul_data.users.urls")),
+                path(
+                    "schools/",
+                    include(("skul_data.schools.urls", "schools"), namespace="schools"),
+                ),
+                path("students/", include("skul_data.students.urls")),
+                path(
+                    "scheduler/",
+                    include(
+                        ("skul_data.scheduler.urls", "scheduler"), namespace="scheduler"
+                    ),
+                ),
+                path(
+                    "documents/",
+                    include(
+                        ("skul_data.documents.urls", "documents"), namespace="documents"
+                    ),
+                ),
+                path("reports/", include("skul_data.reports.urls")),
+                path("analytics/", include("skul_data.analytics.urls")),
+                path("logs/", include("skul_data.action_logs.urls")),
+                path(
+                    "school_timetables/",
+                    include(
+                        ("skul_data.school_timetables.urls", "school_timetables"),
+                        namespace="school_timetables",
+                    ),
+                ),
+                path("notifications/", include("skul_data.notifications.urls")),
+            ]
         ),
     ),
-    path("notifications/", include("skul_data.notifications.urls")),
 ]

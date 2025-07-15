@@ -74,8 +74,9 @@ class User(AbstractUser):
     email = models.EmailField(unique=True)
     role = models.ForeignKey(Role, null=True, blank=True, on_delete=models.SET_NULL)
 
-    USERNAME_FIELD = "email"
-    REQUIRED_FIELDS = ["username"]
+    USERNAME_FIELD = "username"  # This is critical
+    EMAIL_FIELD = "email"
+    REQUIRED_FIELDS = ["email"]  # Adjust as needed
 
     # Add this line to use our custom manager
     objects = UserManager()
@@ -141,5 +142,50 @@ class User(AbstractUser):
             return True
         return super().has_perm(perm, obj)
 
+    def get_username(self):
+        return self.email  # Or your username field
+
+    def get_full_name(self):
+        return f"{self.first_name} {self.last_name}"
+
+    def get_short_name(self):
+        return self.first_name
+
     def __str__(self):
         return self.username
+
+
+from django.contrib.auth.backends import ModelBackend
+from django.contrib.auth import get_user_model
+from django.db.models import Q
+
+User = get_user_model()
+
+
+class CustomUserModelBackend(ModelBackend):
+    """
+    Custom authentication backend that allows users to log in using either username or email.
+    """
+
+    def authenticate(self, request, username=None, password=None, **kwargs):
+        if username is None:
+            username = kwargs.get(User.USERNAME_FIELD)
+
+        if username is None or password is None:
+            return None
+
+        try:
+            # Try to find user by username or email
+            user = User.objects.get(
+                Q(username__iexact=username) | Q(email__iexact=username)
+            )
+        except User.DoesNotExist:
+            # Run the default password hasher once to reduce the timing
+            # difference between an existing and a nonexistent user
+            User().set_password(password)
+            return None
+
+        if user.check_password(password) and self.user_can_authenticate(user):
+            return user
+
+        return None

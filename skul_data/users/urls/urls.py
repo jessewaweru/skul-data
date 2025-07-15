@@ -22,7 +22,7 @@ from skul_data.users.views.school_admin import (
 from skul_data.users.views.base_user import UserViewSet
 
 router = DefaultRouter()
-router.register(r"users", UserViewSet, basename="user")
+router.register(r"", UserViewSet, basename="user")
 router.register(r"roles", RoleViewSet, basename="role")
 router.register(r"permissions", PermissionViewSet, basename="permission")
 router.register("sessions", UserSessionViewSet, basename="usersession")
@@ -49,6 +49,7 @@ router.register(
 )
 
 urlpatterns = [
+    # path("users/me/", UserViewSet.as_view({"get": "me"}), name="user-me"),
     path("", include(router.urls)),
     path("register/", SchoolRegisterAPIView.as_view(), name="school-register"),
     path("login/", SchoolLoginAPIView.as_view(), name="login"),
