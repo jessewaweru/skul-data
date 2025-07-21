@@ -1,3 +1,7 @@
+aiohappyeyeballs==2.6.1
+aiohttp==3.12.14
+aiohttp-retry==2.9.1
+aiosignal==1.4.0
 amqp==5.3.1
 asgiref==3.8.1
 attrs==25.3.0
@@ -6,9 +10,11 @@ Automat==25.4.16
 billiard==4.2.1
 Brotli==1.1.0
 celery==5.5.1
+certifi==2025.7.14
 cffi==1.17.1
 channels==4.2.0
 channels_redis==4.2.1
+charset-normalizer==3.4.2
 click==8.1.8
 click-didyoumean==0.3.1
 click-plugins==1.1.1
@@ -24,6 +30,7 @@ django-celery-beat==2.7.0
 django-cors-headers==4.7.0
 django-debug-toolbar==5.2.0
 django-filter==25.1
+django-model-utils==5.0.0
 django-timezone-field==7.1
 django_celery_results==2.6.0
 djangorestframework==3.15.2
@@ -35,6 +42,7 @@ factory_boy==3.3.3
 Faker==37.1.0
 flower==2.0.1
 fonttools==4.58.0
+frozenlist==1.7.0
 gunicorn==23.0.0
 humanize==4.12.2
 hyperlink==21.0.0
@@ -45,6 +53,7 @@ inflection==0.5.1
 iniconfig==2.1.0
 kombu==5.5.2
 msgpack==1.1.0
+multidict==6.6.3
 numpy==2.2.4
 openpyxl==3.1.5
 packaging==24.2
@@ -53,6 +62,7 @@ pillow==11.2.1
 pluggy==1.5.0
 prometheus_client==0.21.1
 prompt_toolkit==3.0.51
+propcache==0.3.2
 psycopg2==2.9.10
 psycopg2-binary==2.9.10
 pyasn1==0.6.1
@@ -68,6 +78,7 @@ python-decouple==3.8
 pytz==2025.2
 PyYAML==6.0.2
 redis==5.2.1
+requests==2.32.4
 service-identity==24.2.0
 setuptools==80.9.0
 six==1.17.0
@@ -75,6 +86,7 @@ sqlparse==0.5.3
 tinycss2==1.4.0
 tinyhtml5==2.0.0
 tornado==6.4.2
+twilio==9.6.5
 Twisted==25.5.0
 txaio==23.1.1
 typing_extensions==4.14.0
@@ -82,10 +94,12 @@ tzdata==2025.2
 ua-parser==1.0.1
 ua-parser-builtins==0.18.0.post1
 uritemplate==4.1.1
+urllib3==2.5.0
 user-agents==2.2.0
 vine==5.1.0
 wcwidth==0.2.13
 weasyprint==65.1
 webencodings==0.5.1
+yarl==1.20.1
 zope.interface==7.2
 zopfli==0.2.3.post1

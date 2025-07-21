@@ -276,12 +276,22 @@ MANAGE_TEACHER_DOCUMENTS = "manage_teacher_documents"
 VIEW_TEACHER_WORKLOAD = "view_teacher_workload"
 MANAGE_TEACHER_WORKLOAD = "manage_teacher_workload"
 
+# --- Fees Management Permissions ---
+MANAGE_FEES = "manage_fees"
+VIEW_FEES = "view_fees"
+GENERATE_FEE_REPORTS = "generate_fee_reports"
+SEND_FEE_REMINDERS = "send_fee_reminders"
+
 # Recommended permission set for initial setup
 DEFAULT_PERMISSIONS = [
     (CREATE_EVENTS, "Can create calendar events"),
     (MANAGE_EVENTS, "Can manage all calendar events"),
     (VIEW_CALENDAR, "Can view the school calendar"),
     (EXPORT_CALENDAR, "Can export calendar data"),
+    (MANAGE_FEES, "Can manage school fees"),
+    (VIEW_FEES, "Can view fee records"),
+    (GENERATE_FEE_REPORTS, "Can generate fee reports"),
+    (SEND_FEE_REMINDERS, "Can send fee reminders"),
 ]
 
 SCHOOL_ADMIN_PERMISSIONS = [

@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Fee Invoice - {{ school.name }}</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 20px;
+      }
+      .header {
+        margin-bottom: 20px;
+      }
+      .school-info {
+        margin-bottom: 30px;
+      }
+      .invoice-title {
+        text-align: center;
+        margin-bottom: 30px;
+      }
+      .invoice-details {
+        margin-bottom: 30px;
+      }
+      .invoice-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 30px;
+      }
+      .invoice-table th,
+      .invoice-table td {
+        border: 1px solid #ddd;
+        padding: 8px;
+        text-align: left;
+      }
+      .invoice-table th {
+        background-color: #f2f2f2;
+      }
+      .total-row {
+        font-weight: bold;
+      }
+      .footer {
+        margin-top: 50px;
+        font-size: 0.9em;
+      }
+    </style>
+  </head>
+  <body>
+    {{ header_html|safe }}
+
+    <div class="school-info">
+      <h1>{{ school.name }}</h1>
+      <p>{{ school.location }}</p>
+      <p>Phone: {{ school.phone }} | Email: {{ school.email }}</p>
+    </div>
+
+    <div class="invoice-title">
+      <h2>FEE INVOICE</h2>
+      <p>Date: {{ date }}</p>
+    </div>
+
+    <div class="invoice-details">
+      <p><strong>Parent:</strong> {{ parent.user.get_full_name }}</p>
+      <p>
+        <strong>Student:</strong> {{ student.full_name }} ({{
+        student.admission_number }})
+      </p>
+      <p><strong>Class:</strong> {{ fee_structure.school_class }}</p>
+      <p>
+        <strong>Term:</strong> {{ fee_structure.get_term_display() }} {{
+        fee_structure.year }}
+      </p>
+    </div>
+
+    <table class="invoice-table">
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th>Amount (Ksh)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Term Fees</td>
+          <td>{{ fee_structure.amount|floatformat:2 }}</td>
+        </tr>
+        <tr>
+          <td>Previous Balance</td>
+          <td>{{ fee_record.balance|floatformat:2 }}</td>
+        </tr>
+        <tr class="total-row">
+          <td>TOTAL DUE</td>
+          <td>{{ fee_record.amount_owed|floatformat:2 }}</td>
+        </tr>
+        <tr>
+          <td>Amount Paid</td>
+          <td>{{ fee_record.amount_paid|floatformat:2 }}</td>
+        </tr>
+        <tr class="total-row">
+          <td>BALANCE</td>
+          <td>{{ fee_record.balance|floatformat:2 }}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="due-date">
+      <p><strong>Due Date:</strong> {{ fee_record.due_date|date:"F j, Y" }}</p>
+    </div>
+
+    {{ footer_html|safe }}
+  </body>
+</html>

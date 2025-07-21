@@ -36,6 +36,13 @@ docker-compose.override.yml
 # Ignore all DOCX files
 *.docx
 
+# Ignore all image files
+*.jpg
+*.jpeg
+
+# Ignore all csv files
+*.csv
+
 # Ignore all Excel files
 *.xlsx
 # Ignore all text files

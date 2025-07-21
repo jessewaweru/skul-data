@@ -80,9 +80,24 @@ class SecurityLogViewSet(viewsets.ReadOnlyModelViewSet):
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
+# @permission_classes([IsAuthenticated, IsSchoolAdmin])
 def school_teachers(request, school_id):
     teachers = Teacher.objects.filter(school_id=school_id).select_related("user")
     serializer = TeacherSerializer(teachers, many=True)
     return Response(
         {"school_id": school_id, "count": teachers.count(), "teachers": serializer.data}
     )
+
+
+# @api_view(["GET"])
+# # @permission_classes([AllowAny])
+# @permission_classes([IsAuthenticated, IsSchoolAdmin])
+# def school_teachers(request, school_id):
+#     # Verify user belongs to requested school
+#     if request.user.school.id != school_id:
+#         return Response({"error": "Permission denied"}, status=403)
+#     teachers = Teacher.objects.filter(school_id=school_id).select_related("user")
+#     serializer = TeacherSerializer(teachers, many=True)
+#     return Response(
+#         {"school_id": school_id, "count": teachers.count(), "teachers": serializer.data}
+#     )

@@ -9,6 +9,7 @@ class ActionCategory(models.TextChoices):
     CREATE = "CREATE", "Create"
     UPDATE = "UPDATE", "Update"
     DELETE = "DELETE", "Delete"
+    READ = "READ", "Read"
     VIEW = "VIEW", "View"
     LOGIN = "LOGIN", "Login"
     LOGOUT = "LOGOUT", "Logout"

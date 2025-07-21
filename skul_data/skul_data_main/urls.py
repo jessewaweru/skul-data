@@ -70,6 +70,7 @@ urlpatterns = [
                     ),
                 ),
                 path("notifications/", include("skul_data.notifications.urls")),
+                path("fees/", include("skul_data.fee_management.urls")),
             ]
         ),
     ),

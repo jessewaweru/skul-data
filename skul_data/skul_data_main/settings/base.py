@@ -65,6 +65,7 @@ PROJECT_APPS = [
     "skul_data.scheduler",
     "skul_data.analytics",
     "skul_data.school_timetables",
+    "skul_data.fee_management",
 ]
 
 THIRD_PARTY_APPS = [
@@ -284,6 +285,16 @@ CELERY_BEAT_SCHEDULE = {
     "cleanup-old-reports": {
         "task": "skul_data.reports.utils.tasks.cleanup_old_reports",
         "schedule": crontab(hour=4, minute=30),  # Daily at 4:30am
+    },
+    "check-overdue-fees": {
+        "task": "skul_data.fee_management.tasks.check_overdue_fees",
+        "schedule": crontab(hour=8, minute=0),  # Daily at 8:00 AM
+    },
+    "send-fee-reminders": {
+        "task": "skul_data.fee_management.tasks.send_scheduled_fee_reminders",
+        "schedule": crontab(
+            hour=10, minute=0, day_of_week=1
+        ),  # Every Monday at 10:00 AM
     },
 }
 
