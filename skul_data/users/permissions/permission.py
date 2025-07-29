@@ -8,12 +8,19 @@ from skul_data.users.models.teacher import Teacher
 class IsSchoolAdmin(BasePermission):
     """Only for the primary school owner (SchoolAdmin)"""
 
+    # def has_permission(self, request, view):
+    #     return (
+    #         request.user.is_authenticated
+    #         and request.user.user_type == User.SCHOOL_ADMIN
+    #         and hasattr(request.user, "school_admin_profile")
+    #         and request.user.school_admin_profile.is_primary
+    #     )
+
     def has_permission(self, request, view):
         return (
             request.user.is_authenticated
             and request.user.user_type == User.SCHOOL_ADMIN
             and hasattr(request.user, "school_admin_profile")
-            and request.user.school_admin_profile.is_primary
         )
 
 
@@ -113,13 +120,19 @@ class HasRolePermission(BasePermission):
         if not user.is_authenticated:
             return False
 
+        # # 1. School owners (primary admins) have all permissions
+        # if (
+        #     user.user_type == User.SCHOOL_ADMIN
+        #     and hasattr(user, "school_admin_profile")
+        #     and user.school_admin_profile.is_primary
+        # ):
+        #     return True
+
         # 1. School owners (primary admins) have all permissions
-        if (
-            user.user_type == User.SCHOOL_ADMIN
-            and hasattr(user, "school_admin_profile")
-            and user.school_admin_profile.is_primary
+        if user.user_type == User.SCHOOL_ADMIN and hasattr(
+            user, "school_admin_profile"
         ):
-            return True
+            return True  # School admins get full access
 
         required_permission = self._get_required_permission(view, request.method)
         if not required_permission:
@@ -281,6 +294,9 @@ MANAGE_FEES = "manage_fees"
 VIEW_FEES = "view_fees"
 GENERATE_FEE_REPORTS = "generate_fee_reports"
 SEND_FEE_REMINDERS = "send_fee_reminders"
+GENERATE_INVOICES = "generate_invoices"
+SEND_REMINDERS = "send_reminders"
+CONFIRM_PAYMENTS = "confirm_payments"
 
 # Recommended permission set for initial setup
 DEFAULT_PERMISSIONS = [
@@ -315,4 +331,20 @@ DEFAULT_TIMETABLE_PERMISSIONS = [
     (VIEW_TEACHER_TIMETABLES, "Can view teacher timetables"),
     (VIEW_TIMETABLE_SETTINGS, "Can view timetable settings and structures"),
     (MANAGE_TIMETABLE_SETTINGS, "Can manage timetable settings and structures"),
+]
+# Additional permissions for exams
+MANAGE_EXAMS = "manage_exams"
+MANAGE_GRADING_SYSTEMS = "manage_grading_systems"
+VIEW_EXAM_RESULTS = "view_exam_results"
+ENTER_EXAM_RESULTS = "enter_exam_results"
+PUBLISH_EXAM_RESULTS = "publish_exam_results"
+GENERATE_TERM_REPORTS = "generate_term_reports"
+
+DEFAULT_PERMISSIONS = [
+    (MANAGE_EXAMS, "Can create and manage exams"),
+    (MANAGE_GRADING_SYSTEMS, "Can manage grading systems"),
+    (VIEW_EXAM_RESULTS, "Can view exam results"),
+    (ENTER_EXAM_RESULTS, "Can enter exam results"),
+    (PUBLISH_EXAM_RESULTS, "Can publish exam results"),
+    (GENERATE_TERM_REPORTS, "Can generate term reports"),
 ]

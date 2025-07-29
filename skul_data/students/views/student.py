@@ -872,19 +872,6 @@ class SubjectViewSet(viewsets.ModelViewSet):
             return [IsAdministrator()]
         return [IsAuthenticated()]
 
-    # def get_queryset(self):
-    #     queryset = super().get_queryset()
-    #     user = self.request.user
-
-    #     if user.user_type == User.SCHOOL_ADMIN:
-    #         return queryset
-
-    #     school = getattr(user, "school", None)
-    #     if not school:
-    #         return Subject.objects.none()
-
-    #     return queryset.filter(Q(school=school) | Q(school__isnull=True))
-
     def get_queryset(self):
         queryset = super().get_queryset()
         school_code = self.request.query_params.get(

@@ -66,6 +66,7 @@ PROJECT_APPS = [
     "skul_data.analytics",
     "skul_data.school_timetables",
     "skul_data.fee_management",
+    "skul_data.exams",
 ]
 
 THIRD_PARTY_APPS = [

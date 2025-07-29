@@ -1,7 +1,6 @@
 from django.db import models
 from django.utils import timezone
 from django.core.validators import MinValueValidator
-from django.db.models import Sum, F, Q
 from django.conf import settings
 from model_utils import Choices
 from decimal import Decimal
