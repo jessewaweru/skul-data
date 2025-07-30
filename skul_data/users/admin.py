@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.contrib import admin
 from .models.role import Role, Permission
 from .models.teacher import Teacher, TeacherAttendance, TeacherDocument, TeacherWorkload
+from .models.school_admin import AdministratorProfile
 
 
 @admin.register(Permission)
@@ -61,6 +62,29 @@ class TeacherDocumentAdmin(admin.ModelAdmin):
     list_filter = ("document_type", "is_confidential")
     search_fields = ("title", "description")
     raw_id_fields = ("teacher", "uploaded_by")
+
+
+@admin.register(AdministratorProfile)
+class AdministratorProfileAdmin(admin.ModelAdmin):
+    list_display = ("user", "school", "access_level", "kcse_permissions")
+    # filter_horizontal = ("permissions_granted",)
+
+    def kcse_permissions(self, obj):
+        return ", ".join(obj.permissions_granted.get("kcse", []))
+
+    kcse_permissions.short_description = "KCSE Permissions"
+
+    fieldsets = (
+        (None, {"fields": ("user", "school", "position", "access_level")}),
+        (
+            "KCSE Permissions",
+            {
+                "fields": ("permissions_granted",),
+                "description": "Manage permissions for KCSE system",
+            },
+        ),
+        ("Additional Information", {"fields": ("notes",), "classes": ("collapse",)}),
+    )
 
 
 admin.site.register(Teacher, TeacherAdmin)

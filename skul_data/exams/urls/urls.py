@@ -1,6 +1,8 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from skul_data.exams.views.exam import (
+    ConsolidatedReportViewSet,
+    ExamConsolidationRuleViewSet,
     ExamTypeViewSet,
     GradingSystemViewSet,
     GradeRangeViewSet,
@@ -18,6 +20,8 @@ router.register(r"exams", ExamViewSet)
 router.register(r"exam-subjects", ExamSubjectViewSet)
 router.register(r"exam-results", ExamResultViewSet)
 router.register(r"term-reports", TermReportViewSet)
+router.register(r"consolidation-rules", ExamConsolidationRuleViewSet)
+router.register(r"consolidated-reports", ConsolidatedReportViewSet)
 
 urlpatterns = [
     path("", include(router.urls)),
@@ -45,5 +49,15 @@ urlpatterns = [
         "analytics/class-comparison/",
         ExamViewSet.as_view({"get": "analytics_class_comparison"}),
         name="class-comparison",
+    ),
+    path(
+        "consolidated-reports/generate/",
+        ConsolidatedReportViewSet.as_view({"post": "generate"}),
+        name="generate-consolidated-reports",
+    ),
+    path(
+        "consolidation-rules/defaults/",
+        ExamConsolidationRuleViewSet.as_view({"get": "defaults"}),
+        name="default-consolidation-rules",
     ),
 ]

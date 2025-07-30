@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
 from django.shortcuts import get_object_or_404
-from django.db.models import Q
+from django.db.models import Q, Avg
 from django_filters.rest_framework import DjangoFilterBackend
 from skul_data.exams.models.exam import (
     ExamType,
@@ -14,6 +14,8 @@ from skul_data.exams.models.exam import (
     ExamSubject,
     ExamResult,
     TermReport,
+    ExamConsolidationRule,
+    ConsolidatedReport,
 )
 from skul_data.exams.serializers.exam import (
     ExamTypeSerializer,
@@ -25,6 +27,8 @@ from skul_data.exams.serializers.exam import (
     ExamResultBulkSerializer,
     ExamSubjectResultsSerializer,
     TermReportSerializer,
+    ExamConsolidationRuleSerializer,
+    ConsolidatedReportSerializer,
 )
 from skul_data.users.permissions.permission import (
     HasRolePermission,
@@ -32,6 +36,7 @@ from skul_data.users.permissions.permission import (
     IsSchoolAdmin,
     IsTeacher,
 )
+from skul_data.students.models.student import Student
 
 
 class ExamTypeViewSet(viewsets.ReadOnlyModelViewSet):
@@ -288,3 +293,200 @@ class TermReportViewSet(viewsets.ReadOnlyModelViewSet):
         term_report.is_published = True
         term_report.save()
         return Response({"status": "term report published"})
+
+
+class ExamConsolidationRuleViewSet(viewsets.ModelViewSet):
+    queryset = ExamConsolidationRule.objects.all()
+    serializer_class = ExamConsolidationRuleSerializer
+    permission_classes = [IsAuthenticated, HasRolePermission]
+    required_permission = "manage_exams"
+
+    def get_queryset(self):
+        return self.queryset.filter(school=self.request.user.school)
+
+    def perform_create(self, serializer):
+        serializer.save(school=self.request.user.school)
+
+    @action(detail=False, methods=["get"])
+    def defaults(self, request):
+        """Returns default consolidation rules (Opener 20%, Midterm 20%, Endterm 60%)"""
+        default_rules = [
+            {"exam_type": "Opener", "weight": 20},
+            {"exam_type": "Midterm", "weight": 20},
+            {"exam_type": "Endterm", "weight": 60},
+        ]
+        return Response(default_rules)
+
+
+class ConsolidatedReportViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = ConsolidatedReport.objects.all()
+    serializer_class = ConsolidatedReportSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["term", "academic_year", "school_class", "is_published"]
+
+    def get_queryset(self):
+        queryset = self.queryset.filter(school_class__school=self.request.user.school)
+
+        # Teachers can only see their class reports
+        if self.request.user.user_type == "teacher":
+            queryset = queryset.filter(
+                Q(school_class__class_teacher=self.request.user.teacher_profile)
+                | Q(school_class__teachers=self.request.user.teacher_profile)
+            )
+
+        # Parents can only see their children's reports
+        elif self.request.user.user_type == "parent":
+            queryset = queryset.filter(
+                Q(student__parent=self.request.user.parent_profile)
+                | Q(student__guardians=self.request.user.parent_profile)
+            )
+
+        return queryset
+
+    @action(detail=False, methods=["post"])
+    def generate(self, request):
+        """Generates consolidated reports for a term with transaction safety"""
+        term = request.data.get("term")
+        academic_year = request.data.get("academic_year")
+
+        if not term or not academic_year:
+            return Response(
+                {"error": "Term and academic_year are required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with transaction.atomic():  # Ensure all-or-nothing operation
+                school = request.user.school
+                consolidation_rules = ExamConsolidationRule.objects.filter(
+                    school=school, is_active=True
+                ).select_related("exam_type")
+
+                # Verify weights sum to 100%
+                total_weight = sum(rule.weight for rule in consolidation_rules)
+                if total_weight != 100:
+                    return Response(
+                        {
+                            "error": f"Consolidation rules must sum to 100% (current: {total_weight}%)"
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                # Get all active students in the school
+                students = Student.objects.filter(
+                    school_class__school=school, status="ACTIVE", is_active=True
+                ).select_related("school_class")
+
+                # Get all relevant exams for this term
+                exams = Exam.objects.filter(
+                    school=school,
+                    term=term,
+                    academic_year=academic_year,
+                    is_published=True,
+                ).prefetch_related("subjects")
+
+                # Process each student
+                for student in students:
+                    student_results = []
+                    total_weighted_score = 0
+
+                    # Calculate contribution from each exam type
+                    for rule in consolidation_rules:
+                        exam = exams.filter(
+                            exam_type=rule.exam_type, school_class=student.school_class
+                        ).first()
+
+                        if not exam:
+                            continue
+
+                        # Get student's results for this exam
+                        exam_results = ExamResult.objects.filter(
+                            exam_subject__exam=exam, student=student, is_absent=False
+                        ).select_related("exam_subject")
+
+                        if not exam_results.exists():
+                            continue
+
+                        # Calculate exam average
+                        exam_average = (
+                            exam_results.aggregate(avg_score=Avg("score"))["avg_score"]
+                            or 0
+                        )
+
+                        # Apply weighting
+                        weighted_score = (exam_average * rule.weight) / 100
+                        total_weighted_score += weighted_score
+
+                        student_results.append(
+                            {
+                                "exam_type": rule.exam_type.name,
+                                "exam_id": exam.id,
+                                "raw_average": float(exam_average),
+                                "weight": float(rule.weight),
+                                "weighted_score": float(weighted_score),
+                            }
+                        )
+
+                    # Calculate class position (requires all students to be processed)
+                    # This is simplified - in production you'd batch process
+                    class_students = Student.objects.filter(
+                        school_class=student.school_class,
+                        status="ACTIVE",
+                        is_active=True,
+                    )
+                    position = (
+                        class_students.filter(
+                            consolidatedreport__term=term,
+                            consolidatedreport__academic_year=academic_year,
+                            consolidatedreport__average_score__gt=total_weighted_score,
+                        ).count()
+                        + 1
+                    )
+
+                    # Get grade from grading system
+                    grading_system = GradingSystem.objects.filter(
+                        school=school, is_default=True
+                    ).first()
+
+                    grade = "N/A"
+                    if grading_system:
+                        grade_range = grading_system.grade_ranges.filter(
+                            min_score__lte=total_weighted_score,
+                            max_score__gte=total_weighted_score,
+                        ).first()
+                        grade = grade_range.grade if grade_range else "N/A"
+
+                    # Create/update consolidated report
+                    ConsolidatedReport.objects.update_or_create(
+                        student=student,
+                        school_class=student.school_class,
+                        term=term,
+                        academic_year=academic_year,
+                        defaults={
+                            "total_score": total_weighted_score * len(student_results),
+                            "average_score": total_weighted_score,
+                            "overall_grade": grade,
+                            "overall_position": position,
+                            "details": {
+                                "breakdown": student_results,
+                                "rules_used": [
+                                    {"exam_type": r.exam_type.name, "weight": r.weight}
+                                    for r in consolidation_rules
+                                ],
+                            },
+                        },
+                    )
+
+                return Response(
+                    {
+                        "status": f"Successfully generated reports for {students.count()} students"
+                    },
+                    status=status.HTTP_201_CREATED,
+                )
+
+        except Exception as e:
+            return Response(
+                {"error": f"Report generation failed: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

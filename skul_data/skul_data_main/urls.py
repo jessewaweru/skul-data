@@ -72,6 +72,7 @@ urlpatterns = [
                 path("notifications/", include("skul_data.notifications.urls")),
                 path("fees/", include("skul_data.fee_management.urls")),
                 path("exams/", include("skul_data.exams.urls")),
+                path("kcse/", include("skul_data.kcse.urls")),
             ]
         ),
     ),

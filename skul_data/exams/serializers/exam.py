@@ -19,6 +19,7 @@ from skul_data.schools.serializers.schoolclass import SchoolClassSerializer
 from skul_data.students.serializers.student import StudentSerializer
 from skul_data.students.serializers.student import SubjectSerializer
 from skul_data.users.serializers.teacher import TeacherSerializer
+from skul_data.exams.models.exam import ExamConsolidationRule, ConsolidatedReport
 
 
 class ExamTypeSerializer(serializers.ModelSerializer):
@@ -217,4 +218,30 @@ class TermReportSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = TermReport
+        fields = "__all__"
+
+
+class ExamConsolidationRuleSerializer(serializers.ModelSerializer):
+    exam_type = ExamTypeSerializer(read_only=True)
+    exam_type_id = serializers.PrimaryKeyRelatedField(
+        queryset=ExamType.objects.all(), source="exam_type", write_only=True
+    )
+
+    class Meta:
+        model = ExamConsolidationRule
+        fields = "__all__"
+        read_only_fields = ("school", "created_at", "updated_at")
+
+    def validate(self, data):
+        if data["weight"] < 0 or data["weight"] > 100:
+            raise serializers.ValidationError("Weight must be between 0 and 100")
+        return data
+
+
+class ConsolidatedReportSerializer(serializers.ModelSerializer):
+    student = StudentSerializer(read_only=True)
+    school_class = SchoolClassSerializer(read_only=True)
+
+    class Meta:
+        model = ConsolidatedReport
         fields = "__all__"

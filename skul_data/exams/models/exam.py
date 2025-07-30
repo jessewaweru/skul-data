@@ -428,3 +428,64 @@ class TermReport(models.Model):
                 self.overall_grade = grade_range.grade
 
         self.save()
+
+
+class ExamConsolidationRule(models.Model):
+    """Defines how different exam types contribute to final term grades"""
+
+    school = models.ForeignKey(
+        School, on_delete=models.CASCADE, related_name="consolidation_rules"
+    )
+    exam_type = models.ForeignKey(
+        ExamType, on_delete=models.CASCADE, related_name="consolidation_rules"
+    )
+    weight = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        help_text="Weight in percentage for this exam type",
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("school", "exam_type")
+        ordering = ["-weight"]
+
+    def __str__(self):
+        return f"{self.exam_type.name} ({self.weight}%) - {self.school.name}"
+
+
+class ConsolidatedReport(models.Model):
+    """Stores final consolidated term results for students"""
+
+    student = models.ForeignKey(
+        Student, on_delete=models.CASCADE, related_name="consolidated_reports"
+    )
+    school_class = models.ForeignKey(
+        SchoolClass, on_delete=models.CASCADE, related_name="consolidated_reports"
+    )
+    term = models.CharField(max_length=20)
+    academic_year = models.CharField(max_length=20)
+    total_score = models.DecimalField(
+        max_digits=6, decimal_places=2, validators=[MinValueValidator(0)]
+    )
+    average_score = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+    )
+    overall_grade = models.CharField(max_length=10)
+    overall_position = models.PositiveIntegerField()
+    details = models.JSONField()  # Stores breakdown of exam contributions
+    is_published = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("student", "school_class", "term", "academic_year")
+        ordering = ["-academic_year", "term", "overall_position"]
+
+    def __str__(self):
+        return f"{self.student} - Term {self.term} {self.academic_year}"

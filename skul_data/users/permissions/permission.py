@@ -53,6 +53,35 @@ class IsAdministrator(BasePermission):
         return False
 
 
+class IsKCSEAdministrator(BasePermission):
+    """Check if user has KCSE-specific permissions"""
+
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+
+        # Primary school admin has full access
+        if hasattr(request.user, "school_admin_profile"):
+            return True
+
+        # Check administrator profile permissions
+        if hasattr(request.user, "administrator_profile"):
+            profile = request.user.administrator_profile
+            required_perm = getattr(view, "required_permission", None)
+
+            # Check access level first
+            if profile.access_level == "restricted":
+                return False
+            elif profile.access_level == "elevated":
+                return True
+
+            # Check explicit permissions
+            perms = profile.permissions_granted.get("kcse", [])
+            return required_perm in perms if required_perm else True
+
+        return False
+
+
 class IsTeacher(BasePermission):
     def has_permission(self, request, view):
         return request.user.is_authenticated and request.user.user_type == User.TEACHER
@@ -340,11 +369,11 @@ ENTER_EXAM_RESULTS = "enter_exam_results"
 PUBLISH_EXAM_RESULTS = "publish_exam_results"
 GENERATE_TERM_REPORTS = "generate_term_reports"
 
-DEFAULT_PERMISSIONS = [
-    (MANAGE_EXAMS, "Can create and manage exams"),
-    (MANAGE_GRADING_SYSTEMS, "Can manage grading systems"),
-    (VIEW_EXAM_RESULTS, "Can view exam results"),
-    (ENTER_EXAM_RESULTS, "Can enter exam results"),
-    (PUBLISH_EXAM_RESULTS, "Can publish exam results"),
-    (GENERATE_TERM_REPORTS, "Can generate term reports"),
+EXAM_PERMISSIONS = [
+    (MANAGE_EXAMS, "Can create and manage all exams (including KCSE)"),
+    (MANAGE_GRADING_SYSTEMS, "Can manage grading systems for all exams"),
+    (VIEW_EXAM_RESULTS, "Can view exam results (including KCSE)"),
+    (ENTER_EXAM_RESULTS, "Can enter exam results (including KCSE)"),
+    (PUBLISH_EXAM_RESULTS, "Can publish exam results (including KCSE)"),
+    (GENERATE_TERM_REPORTS, "Can generate term reports and KCSE analysis"),
 ]

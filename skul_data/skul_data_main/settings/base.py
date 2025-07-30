@@ -67,6 +67,7 @@ PROJECT_APPS = [
     "skul_data.school_timetables",
     "skul_data.fee_management",
     "skul_data.exams",
+    "skul_data.kcse",
 ]
 
 THIRD_PARTY_APPS = [
@@ -77,6 +78,7 @@ THIRD_PARTY_APPS = [
     "django_celery_beat",
     "corsheaders",
     "channels",
+    "django_filters",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + PROJECT_APPS + THIRD_PARTY_APPS
