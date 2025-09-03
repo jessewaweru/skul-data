@@ -99,6 +99,7 @@ class Document(models.Model):
 
     # Access control
     is_public = models.BooleanField(default=False)
+    is_template = models.BooleanField(default=False)
     allowed_roles = models.ManyToManyField(
         "users.Role", blank=True, help_text="Roles that can access this document"
     )

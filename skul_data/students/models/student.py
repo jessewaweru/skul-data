@@ -2,6 +2,7 @@ from django.db import models
 from django.utils import timezone
 from skul_data.action_logs.utils.action_log import log_action
 from skul_data.action_logs.models.action_log import ActionCategory
+from django.db.models import Max
 
 
 class StudentStatus(models.TextChoices):
@@ -164,30 +165,45 @@ class Student(models.Model):
     @property
     def phone_number(self):
         """Get primary parent's phone number"""
-        if self.parent:
-            return (
-                self.parent.phone_number
-            )  # Access phone_number directly from Parent model
-        if self.guardians.exists():
-            return self.guardians.first().phone_number
+        try:
+            if self.parent:
+                return self.parent.phone_number
+
+            # Use a more efficient query to avoid recursion
+            guardian = self.guardians.select_related("user").first()
+            if guardian:
+                return guardian.phone_number
+        except Exception:
+            # Return None if there's any error to prevent crashes
+            return None
         return None
 
     @property
     def email(self):
         """Get primary parent's email"""
-        if self.parent:
-            return self.parent.user.email  # Email is on User model
-        if self.guardians.exists():
-            return self.guardians.first().user.email
+        try:
+            if self.parent:
+                return self.parent.user.email
+
+            guardian = self.guardians.select_related("user").first()
+            if guardian:
+                return guardian.user.email
+        except Exception:
+            return None
         return None
 
     @property
     def address(self):
         """Get primary parent's address"""
-        if self.parent:
-            return self.parent.address  # Access address directly from Parent model
-        if self.guardians.exists():
-            return self.guardians.first().address
+        try:
+            if self.parent:
+                return self.parent.address
+
+            guardian = self.guardians.first()
+            if guardian:
+                return guardian.address
+        except Exception:
+            return None
         return None
 
 

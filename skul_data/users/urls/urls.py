@@ -25,7 +25,7 @@ router = DefaultRouter()
 router.register(r"", UserViewSet, basename="user")
 router.register(r"roles", RoleViewSet, basename="role")
 router.register(r"permissions", PermissionViewSet, basename="permission")
-router.register("sessions", UserSessionViewSet, basename="usersession")
+router.register(r"sessions", UserSessionViewSet, basename="usersession")
 router.register(r"teachers", TeacherViewSet, basename="teacher")
 router.register(
     r"teacher-workloads", TeacherWorkloadViewSet, basename="teacher-workload"

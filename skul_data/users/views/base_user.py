@@ -36,6 +36,7 @@ class UserViewSet(viewsets.ModelViewSet):
     required_permission = "manage_users"
     search_fields = ["username", "email", "first_name", "last_name"]
     filterset_fields = ["user_type", "is_active"]
+    pagination_class = None
 
     def get_serializer_class(self):
         if self.action == "retrieve":
@@ -308,3 +309,23 @@ class UserViewSet(viewsets.ModelViewSet):
             user.save()
 
         return Response({"status": "administrator privileges removed"})
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+
+        # Add search functionality
+        search_term = request.query_params.get("search", "")
+        if search_term:
+            queryset = queryset.filter(
+                Q(first_name__icontains=search_term)
+                | Q(last_name__icontains=search_term)
+                | Q(email__icontains=search_term)
+            )
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)

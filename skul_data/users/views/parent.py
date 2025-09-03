@@ -83,24 +83,43 @@ class ParentViewSet(viewsets.ModelViewSet):
     #         return [IsAdministrator()]
     #     return [IsAuthenticated()]
 
+    # def get_queryset(self):
+    #     queryset = super().get_queryset()
+    #     user = self.request.user
+
+    #     if user.user_type == User.SCHOOL_ADMIN:
+    #         return queryset
+
+    #     school = getattr(user, "school", None)
+    #     if not school:
+    #         return Parent.objects.none()
+
+    #     queryset = queryset.filter(school=school)
+
+    #     # Parents can only see their own profile
+    #     if user.user_type == "parent":
+    #         return queryset.filter(user=user)
+
+    #     return queryset.select_related("user", "school").prefetch_related("children")
+
     def get_queryset(self):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if user.user_type == User.SCHOOL_ADMIN:
-            return queryset
+        # Get school from user
+        school = user.school  # Using your User model's school property
 
-        school = getattr(user, "school", None)
         if not school:
             return Parent.objects.none()
 
+        # Always filter by school
         queryset = queryset.filter(school=school)
 
         # Parents can only see their own profile
-        if user.user_type == "parent":
+        if user.user_type == User.PARENT:
             return queryset.filter(user=user)
 
-        return queryset.select_related("user", "school").prefetch_related("children")
+        return queryset
 
     @action(detail=True, methods=["post"])
     def change_status(self, request, pk=None):

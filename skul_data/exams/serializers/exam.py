@@ -1,7 +1,7 @@
 import decimal
 from decimal import Decimal
 from django.core.validators import MinValueValidator
-from django.db.models import Q
+from django.db.models import Q, Avg
 from rest_framework import serializers
 from skul_data.exams.models.exam import (
     ExamType,

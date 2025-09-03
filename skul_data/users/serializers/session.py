@@ -6,6 +6,43 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 
 
+# class UserSessionSerializer(serializers.ModelSerializer):
+#     user = serializers.SerializerMethodField()
+#     session_key = serializers.CharField(source="session.session_key")
+#     is_active = serializers.SerializerMethodField()
+
+#     class Meta:
+#         model = UserSession
+#         fields = [
+#             "session_key",
+#             "user",
+#             "ip_address",
+#             "device",
+#             "browser",
+#             "os",
+#             "location",
+#             "login_time",
+#             "last_activity",
+#             "is_active",
+#         ]
+
+#     def get_user(self, obj):
+#         return {
+#             "id": obj.user.id,
+#             "name": obj.user.get_full_name(),
+#             "email": obj.user.email,
+#             "role": (
+#                 obj.user.role.name
+#                 if hasattr(obj.user, "role") and obj.user.role
+#                 else None
+#             ),
+#             "avatar": getattr(obj.user, "avatar_url", None),
+#         }
+
+#     def get_is_active(self, obj):
+#         return obj.session.expire_date > timezone.now()
+
+
 class UserSessionSerializer(serializers.ModelSerializer):
     user = serializers.SerializerMethodField()
     session_key = serializers.CharField(source="session.session_key")
@@ -27,17 +64,29 @@ class UserSessionSerializer(serializers.ModelSerializer):
         ]
 
     def get_user(self, obj):
-        return {
-            "id": obj.user.id,
-            "name": obj.user.get_full_name(),
-            "email": obj.user.email,
-            "role": (
-                obj.user.role.name
-                if hasattr(obj.user, "role") and obj.user.role
-                else None
-            ),
-            "avatar": getattr(obj.user, "avatar_url", None),
-        }
+        try:
+            user = obj.user
+            return {
+                "id": user.id,
+                "name": user.get_full_name()
+                or f"{user.first_name} {user.last_name}".strip()
+                or user.username,
+                "email": user.email,
+                "role": user.role.name if user.role else "No Role",
+                "avatar": getattr(user, "avatar_url", None),
+            }
+        except Exception as e:
+            # Fallback in case of any issues
+            return {
+                "id": obj.user.id if obj.user else None,
+                "name": str(obj.user) if obj.user else "Unknown User",
+                "email": obj.user.email if obj.user else "unknown@example.com",
+                "role": "Unknown",
+                "avatar": None,
+            }
 
     def get_is_active(self, obj):
-        return obj.session.expire_date > timezone.now()
+        try:
+            return obj.session.expire_date > timezone.now()
+        except:
+            return False

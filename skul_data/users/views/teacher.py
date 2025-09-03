@@ -375,18 +375,87 @@ class TeacherAttendanceViewSet(viewsets.ModelViewSet):
     filterset_fields = ["teacher", "date", "status"]
     permission_classes = [IsAdministrator]
 
+    # def get_queryset(self):
+    #     queryset = super().get_queryset()
+    #     user = self.request.user
+
+    #     if user.user_type == User.SCHOOL_ADMIN:
+    #         return queryset
+
+    #     school = getattr(user, "school", None)
+    #     if not school:
+    #         return TeacherAttendance.objects.none()
+
+    #     return queryset.filter(teacher__school=school)
+
     def get_queryset(self):
-        queryset = super().get_queryset()
         user = self.request.user
+        school = user.school
 
-        if user.user_type == User.SCHOOL_ADMIN:
-            return queryset
-
-        school = getattr(user, "school", None)
         if not school:
-            return TeacherAttendance.objects.none()
+            return Teacher.objects.none()
 
-        return queryset.filter(teacher__school=school)
+        # Always filter by school
+        return Teacher.objects.filter(school=school)
+
+
+# class TeacherDocumentViewSet(viewsets.ModelViewSet):
+#     queryset = TeacherDocument.objects.all()
+#     serializer_class = TeacherDocumentSerializer
+#     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+#     filterset_fields = ["teacher", "document_type", "is_confidential"]
+#     search_fields = ["title", "description"]
+
+#     def get_permissions(self):
+#         if self.action in ["create", "update", "destroy"]:
+#             return [IsAdministrator()]
+#         return [IsAuthenticated()]
+
+#     def get_queryset(self):
+#         queryset = super().get_queryset()
+#         user = self.request.user
+
+#         if user.user_type == User.SCHOOL_ADMIN:
+#             return queryset
+
+#         school = getattr(user, "school", None)
+#         if not school:
+#             return TeacherDocument.objects.none()
+
+#         queryset = queryset.filter(teacher__school=school)
+
+#         if user.user_type == "teacher":
+#             return queryset.filter(Q(teacher__user=user) | Q(is_confidential=False))
+
+#         return queryset
+
+#     def perform_create(self, serializer):
+#         serializer.save(uploaded_by=self.request.user)
+
+#     def destroy(self, request, *args, **kwargs):
+#         instance = self.get_object()
+
+#         # Log before deletion
+#         log_action(
+#             user=request.user,
+#             action=f"Deleted teacher document: {instance.title}",
+#             category=ActionCategory.DELETE,
+#             obj=instance,
+#             metadata={
+#                 "document_type": instance.document_type,
+#                 "teacher_id": instance.teacher.id,
+#                 "was_confidential": instance.is_confidential,
+#             },
+#         )
+
+#         try:
+#             self.perform_destroy(instance)
+#             return Response(status=status.HTTP_204_NO_CONTENT)
+#         except Exception as e:
+#             # Ensure log exists even if deletion fails
+#             return Response(
+#                 {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+#             )
 
 
 class TeacherDocumentViewSet(viewsets.ModelViewSet):
@@ -402,25 +471,102 @@ class TeacherDocumentViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated()]
 
     def get_queryset(self):
+        """Fixed queryset method to properly handle school filtering and permissions"""
+        print(f"=== TeacherDocumentViewSet get_queryset DEBUG ===")
+        print(f"User: {self.request.user}")
+        print(f"User type: {getattr(self.request.user, 'user_type', 'None')}")
+        print(f"Query params: {self.request.query_params}")
+
         queryset = super().get_queryset()
         user = self.request.user
 
+        # Debug: Print total documents in system
+        total_docs = queryset.count()
+        print(f"Total documents in system: {total_docs}")
+
+        # Handle different user types
         if user.user_type == User.SCHOOL_ADMIN:
+            print("User is SCHOOL_ADMIN, getting school...")
+
+            # Get school from user's profile
+            school = None
+            if hasattr(user, "school_admin_profile") and user.school_admin_profile:
+                school = user.school_admin_profile.school
+                print(f"School from admin profile: {school}")
+
+            if school:
+                # Filter documents to only show documents for teachers in this school
+                school_queryset = queryset.filter(teacher__school=school)
+                print(f"Documents for school {school.id}: {school_queryset.count()}")
+
+                # Debug: Show some examples
+                for doc in school_queryset[:3]:
+                    print(f"  - Doc {doc.id}: {doc.title} (Teacher: {doc.teacher.id})")
+
+                return school_queryset
+            else:
+                print("No school found for admin user - returning empty queryset")
+                return TeacherDocument.objects.none()
+
+        elif user.user_type == User.TEACHER:
+            print("User is TEACHER")
+            # Teachers can see their own documents and non-confidential documents
+            teacher_profile = getattr(user, "teacher_profile", None)
+            if teacher_profile:
+                school = teacher_profile.school
+                school_queryset = queryset.filter(teacher__school=school)
+                # Filter to own documents OR non-confidential documents
+                filtered_queryset = school_queryset.filter(
+                    Q(teacher=teacher_profile) | Q(is_confidential=False)
+                )
+                print(f"Documents for teacher: {filtered_queryset.count()}")
+                return filtered_queryset
+            else:
+                print("No teacher profile found - returning empty queryset")
+                return TeacherDocument.objects.none()
+
+        elif user.is_superuser:
+            print("User is superuser - returning all documents")
             return queryset
 
-        school = getattr(user, "school", None)
-        if not school:
+        else:
+            print(f"Unknown user type: {user.user_type} - returning empty queryset")
             return TeacherDocument.objects.none()
-
-        queryset = queryset.filter(teacher__school=school)
-
-        if user.user_type == "teacher":
-            return queryset.filter(Q(teacher__user=user) | Q(is_confidential=False))
-
-        return queryset
 
     def perform_create(self, serializer):
         serializer.save(uploaded_by=self.request.user)
+
+    def list(self, request, *args, **kwargs):
+        """Override list to add debugging"""
+        print(f"\n=== TeacherDocumentViewSet LIST DEBUG ===")
+        print(f"Request params: {request.query_params}")
+        print(f"User: {request.user}")
+
+        # Get the queryset
+        queryset = self.filter_queryset(self.get_queryset())
+        print(f"Filtered queryset count: {queryset.count()}")
+
+        # Check for teacher filter specifically
+        teacher_filter = request.query_params.get("teacher")
+        if teacher_filter:
+            print(f"Teacher filter applied: {teacher_filter}")
+            teacher_docs = queryset.filter(teacher=teacher_filter)
+            print(f"Documents for teacher {teacher_filter}: {teacher_docs.count()}")
+
+            for doc in teacher_docs:
+                print(
+                    f"  - Doc {doc.id}: {doc.title} (Teacher: {doc.teacher.id}, School: {doc.teacher.school.id})"
+                )
+
+        response = super().list(request, *args, **kwargs)
+        print(f"Response data type: {type(response.data)}")
+
+        if isinstance(response.data, dict) and "results" in response.data:
+            print(f"Response contains {len(response.data['results'])} results")
+        elif isinstance(response.data, list):
+            print(f"Response contains {len(response.data)} items")
+
+        return response
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -442,7 +588,6 @@ class TeacherDocumentViewSet(viewsets.ModelViewSet):
             self.perform_destroy(instance)
             return Response(status=status.HTTP_204_NO_CONTENT)
         except Exception as e:
-            # Ensure log exists even if deletion fails
             return Response(
                 {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

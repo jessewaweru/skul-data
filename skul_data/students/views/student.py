@@ -36,6 +36,7 @@ from skul_data.users.models.base_user import User
 from skul_data.action_logs.models.action_log import ActionCategory
 from skul_data.action_logs.utils.action_log import log_action
 from rest_framework.permissions import OR
+from django.db import models
 
 
 class StudentFilter(filters.FilterSet):
@@ -359,9 +360,13 @@ class StudentViewSet(viewsets.ModelViewSet):
             count=Count("id")
         )
 
-        # Age distribution
+        # Age distribution - Fixed to use current year dynamically
+        from django.utils import timezone
+
+        current_year = timezone.now().year
+
         age_distribution = (
-            queryset.annotate(age=2023 - models.F("date_of_birth__year"))
+            queryset.annotate(age=current_year - models.F("date_of_birth__year"))
             .values("age")
             .annotate(count=Count("id"))
             .order_by("age")
@@ -370,11 +375,11 @@ class StudentViewSet(viewsets.ModelViewSet):
         return Response(
             {
                 "total_students": total_students,
-                "students_by_class": students_by_class,
-                "students_by_status": students_by_status,
-                "gender_distribution": gender_distribution,
-                "performance_distribution": performance_distribution,
-                "age_distribution": age_distribution,
+                "students_by_class": list(students_by_class),
+                "students_by_status": list(students_by_status),
+                "gender_distribution": list(gender_distribution),
+                "performance_distribution": list(performance_distribution),
+                "age_distribution": list(age_distribution),
             }
         )
 

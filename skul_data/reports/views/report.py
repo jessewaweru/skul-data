@@ -22,6 +22,7 @@ from skul_data.reports.serializers.report import (
 from skul_data.users.permissions.permission import (
     IsAdministrator,
     IsParent,
+    IsSchoolAdmin,
 )
 from django.db import models
 from skul_data.reports.models.report import GeneratedReport
@@ -176,7 +177,8 @@ class GeneratedReportViewSet(viewsets.ModelViewSet):
 class ReportScheduleViewSet(viewsets.ModelViewSet):
     queryset = ReportSchedule.objects.all()
     serializer_class = ReportScheduleSerializer
-    permission_classes = [IsAdministrator]
+    # permission_classes = [IsAdministrator]
+    permission_classes = [IsSchoolAdmin | IsAdministrator]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["report_template", "frequency", "is_active", "school"]
 

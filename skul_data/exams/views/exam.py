@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
 from django.shortcuts import get_object_or_404
-from django.db.models import Q, Avg
+from django.db.models import Q, Avg, Max, Min
 from django_filters.rest_framework import DjangoFilterBackend
 from skul_data.exams.models.exam import (
     ExamType,
@@ -37,6 +37,8 @@ from skul_data.users.permissions.permission import (
     IsTeacher,
 )
 from skul_data.students.models.student import Student
+from collections import defaultdict
+from django.utils import timezone
 
 
 class ExamTypeViewSet(viewsets.ReadOnlyModelViewSet):
@@ -97,6 +99,68 @@ class GradeRangeViewSet(viewsets.ModelViewSet):
         serializer.save(grading_system=grading_system)
 
 
+# class ExamViewSet(viewsets.ModelViewSet):
+#     queryset = Exam.objects.all()
+#     serializer_class = ExamSerializer
+#     permission_classes = [IsAuthenticated, HasRolePermission]
+#     required_permission = "manage_exams"
+#     filter_backends = [DjangoFilterBackend]
+#     filterset_fields = ["term", "academic_year", "school_class", "exam_type"]
+
+#     def get_queryset(self):
+#         return super().get_queryset().filter(school=self.request.user.school)
+
+#     def perform_create(self, serializer):
+#         serializer.save(created_by=self.request.user, school=self.request.user.school)
+
+#     @action(detail=True, methods=["post"])
+#     def publish(self, request, pk=None):
+#         exam = self.get_object()
+#         exam.is_published = True
+#         exam.save()
+
+#         # Publish all subjects if they haven't been published individually
+#         exam.subjects.filter(is_published=False).update(is_published=True)
+
+#         return Response({"status": "exam published"})
+
+#     @action(detail=True, methods=["post"])
+#     def generate_term_report(self, request, pk=None):
+#         exam = self.get_object()
+
+#         # Get all students in the class
+#         students = exam.school_class.class_students.filter(
+#             status="ACTIVE", is_active=True
+#         )
+
+#         for student in students:
+#             term_report, created = TermReport.objects.get_or_create(
+#                 student=student,
+#                 school_class=exam.school_class,
+#                 term=exam.term,
+#                 academic_year=exam.academic_year,
+#             )
+#             term_report.calculate_results()
+
+#         return Response({"status": "term reports generated"})
+
+#     @action(detail=False, methods=["get"])
+#     def terms(self, request):
+#         terms = self.get_queryset().values("term", "academic_year").distinct()
+#         return Response(list(terms))
+
+#     @action(detail=False, methods=["get"])
+#     def stats(self, request):
+#         from django.db.models import Count, Avg
+
+#         stats = self.get_queryset().aggregate(
+#             total=Count("id"),
+#             published=Count("id", filter=Q(is_published=True)),
+#             upcoming=Count("id", filter=Q(status="Upcoming")),
+#         )
+#         return Response(stats)
+
+
 class ExamViewSet(viewsets.ModelViewSet):
     queryset = Exam.objects.all()
     serializer_class = ExamSerializer
@@ -110,6 +174,51 @@ class ExamViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user, school=self.request.user.school)
+
+    def _get_time_filtered_exams(self, time_range):
+        """Helper method to get exams based on time range"""
+        user_school = getattr(self.request.user, "school", None)
+        if not user_school:
+            return Exam.objects.none()
+
+        queryset = Exam.objects.filter(school=user_school)
+        today = timezone.now().date()
+        current_year = today.year
+
+        if time_range == "current_term":
+            # Get current term based on today's date
+            current_month = today.month
+            if current_month <= 4:
+                current_term = "Term 1"
+            elif current_month <= 8:
+                current_term = "Term 2"
+            else:
+                current_term = "Term 3"
+
+            queryset = queryset.filter(
+                term=current_term, academic_year=str(current_year)
+            )
+        elif time_range == "last_term":
+            # Get previous term
+            current_month = today.month
+            if current_month <= 4:
+                prev_term = "Term 3"
+                prev_year = str(current_year - 1)
+            elif current_month <= 8:
+                prev_term = "Term 1"
+                prev_year = str(current_year)
+            else:
+                prev_term = "Term 2"
+                prev_year = str(current_year)
+
+            queryset = queryset.filter(term=prev_term, academic_year=prev_year)
+        elif time_range == "current_year":
+            queryset = queryset.filter(academic_year=str(current_year))
+        elif time_range == "last_year":
+            queryset = queryset.filter(academic_year=str(current_year - 1))
+        # For "all_time", return all exams
+
+        return queryset.filter(is_published=True)
 
     @action(detail=True, methods=["post"])
     def publish(self, request, pk=None):
@@ -147,16 +256,316 @@ class ExamViewSet(viewsets.ModelViewSet):
         terms = self.get_queryset().values("term", "academic_year").distinct()
         return Response(list(terms))
 
-    @action(detail=False, methods=["get"])
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
     def stats(self, request):
-        from django.db.models import Count, Avg
+        """Get exam statistics for dashboard"""
+        try:
+            from django.utils import timezone
 
-        stats = self.get_queryset().aggregate(
-            total=Count("id"),
-            published=Count("id", filter=Q(is_published=True)),
-            upcoming=Count("id", filter=Q(status="Upcoming")),
-        )
-        return Response(stats)
+            # Get user's school
+            user_school = getattr(request.user, "school", None)
+            if not user_school:
+                return Response(
+                    {
+                        "upcomingExams": 0,
+                        "examsInProgress": 0,
+                        "marksEntered": 0,
+                        "resultsPublished": 0,
+                        "totalExams": 0,
+                        "publishedExams": 0,
+                        "completedExams": 0,
+                    }
+                )
+
+            # Get queryset for user's school
+            queryset = Exam.objects.filter(school=user_school)
+            today = timezone.now().date()
+
+            # Calculate basic exam stats
+            total_exams = queryset.count()
+            published_exams = queryset.filter(is_published=True).count()
+            upcoming_exams = queryset.filter(start_date__gt=today).count()
+            ongoing_exams = queryset.filter(
+                start_date__lte=today, end_date__gte=today
+            ).count()
+            completed_exams = queryset.filter(end_date__lt=today).count()
+
+            # Get exam subjects and results stats
+            exam_subjects = ExamSubject.objects.filter(exam__school=user_school)
+            subjects_with_marks = (
+                exam_subjects.filter(results__isnull=False).distinct().count()
+            )
+
+            # Get published results count
+            published_results = ExamResult.objects.filter(
+                exam_subject__exam__school=user_school, exam_subject__is_published=True
+            ).count()
+
+            response_data = {
+                "upcomingExams": upcoming_exams,
+                "examsInProgress": ongoing_exams,
+                "marksEntered": subjects_with_marks,
+                "resultsPublished": published_results,
+                "totalExams": total_exams,
+                "publishedExams": published_exams,
+                "completedExams": completed_exams,
+            }
+
+            return Response(response_data)
+
+        except Exception as e:
+            # Log the error for debugging
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in exam stats endpoint: {str(e)}")
+
+            # Return default values if there's an error
+            return Response(
+                {
+                    "upcomingExams": 0,
+                    "examsInProgress": 0,
+                    "marksEntered": 0,
+                    "resultsPublished": 0,
+                    "totalExams": 0,
+                    "publishedExams": 0,
+                    "completedExams": 0,
+                    "error": "Unable to fetch statistics",
+                }
+            )
+
+    @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
+    def recent(self, request):
+        """Get recent exams for dashboard table"""
+        try:
+            # Get user's school
+            user_school = getattr(request.user, "school", None)
+            if not user_school:
+                return Response([])
+
+            # Get recent exams
+            queryset = (
+                Exam.objects.filter(school=user_school)
+                .select_related("exam_type", "school_class")
+                .order_by("-created_at")[:10]
+            )
+
+            recent_exams = []
+            for exam in queryset:
+                recent_exams.append(
+                    {
+                        "id": exam.id,
+                        "name": exam.name,
+                        "exam_type": exam.exam_type.name if exam.exam_type else "N/A",
+                        "school_class": (
+                            exam.school_class.name if exam.school_class else "N/A"
+                        ),
+                        "status": exam.status,
+                        "is_published": exam.is_published,
+                        "start_date": (
+                            exam.start_date.isoformat() if exam.start_date else None
+                        ),
+                        "end_date": (
+                            exam.end_date.isoformat() if exam.end_date else None
+                        ),
+                        "term": exam.term,
+                        "academic_year": exam.academic_year,
+                    }
+                )
+
+            return Response(recent_exams)
+
+        except Exception as e:
+            # Log the error for debugging
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in exam recent endpoint: {str(e)}")
+
+            return Response([])  # Return empty list if there's an error
+
+    @action(detail=False, methods=["get"])
+    def analytics_performance(self, request):
+        """Get performance analytics"""
+        try:
+            time_range = request.query_params.get("range", "current_term")
+            exams = self._get_time_filtered_exams(time_range)
+
+            if not exams.exists():
+                return Response(
+                    {"labels": [], "averages": [], "highest": [], "lowest": []}
+                )
+
+            # Get exam results for performance analysis
+            exam_results_by_exam = {}
+
+            for exam in exams.select_related("exam_type"):
+                exam_subjects = ExamSubject.objects.filter(exam=exam)
+                results = ExamResult.objects.filter(
+                    exam_subject__in=exam_subjects, is_absent=False
+                ).aggregate(
+                    avg_score=Avg("score"),
+                    max_score=Max("score"),
+                    min_score=Min("score"),
+                )
+
+                exam_label = f"{exam.exam_type.name} - {exam.term}"
+                exam_results_by_exam[exam_label] = {
+                    "average": float(results["avg_score"] or 0),
+                    "highest": float(results["max_score"] or 0),
+                    "lowest": float(results["min_score"] or 0),
+                }
+
+            # Prepare data for frontend
+            labels = list(exam_results_by_exam.keys())
+            averages = [exam_results_by_exam[label]["average"] for label in labels]
+            highest = [exam_results_by_exam[label]["highest"] for label in labels]
+            lowest = [exam_results_by_exam[label]["lowest"] for label in labels]
+
+            return Response(
+                {
+                    "labels": labels,
+                    "averages": averages,
+                    "highest": highest,
+                    "lowest": lowest,
+                }
+            )
+
+        except Exception as e:
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in performance analytics: {str(e)}")
+
+            return Response(
+                {
+                    "labels": [],
+                    "averages": [],
+                    "highest": [],
+                    "lowest": [],
+                    "error": str(e),
+                }
+            )
+
+    @action(detail=False, methods=["get"])
+    def analytics_subject_trends(self, request):
+        """Get subject trends analytics"""
+        try:
+            time_range = request.query_params.get("range", "current_term")
+            exams = self._get_time_filtered_exams(time_range)
+
+            if not exams.exists():
+                return Response({"labels": [], "datasets": []})
+
+            # Get subject performance over time
+            subject_trends = defaultdict(list)
+            exam_labels = []
+
+            for exam in exams.order_by("start_date").select_related("exam_type"):
+                exam_label = f"{exam.exam_type.name} - {exam.term}"
+                exam_labels.append(exam_label)
+
+                # Get subjects for this exam
+                exam_subjects = ExamSubject.objects.filter(exam=exam).select_related(
+                    "subject"
+                )
+
+                for exam_subject in exam_subjects:
+                    subject_name = exam_subject.subject.name
+                    avg_score = ExamResult.objects.filter(
+                        exam_subject=exam_subject, is_absent=False
+                    ).aggregate(avg_score=Avg("score"))["avg_score"]
+
+                    subject_trends[subject_name].append(float(avg_score or 0))
+
+            # Ensure all subjects have data for all exams (fill missing with 0)
+            datasets = []
+            colors = [
+                "#6B1B9A",
+                "#4A148C",
+                "#311B92",
+                "#1A237E",
+                "#0D47A1",
+                "#01579B",
+                "#006064",
+                "#004D40",
+                "#1B5E20",
+                "#33691E",
+            ]
+
+            for i, (subject_name, scores) in enumerate(subject_trends.items()):
+                # Pad scores to match exam_labels length
+                while len(scores) < len(exam_labels):
+                    scores.append(0)
+
+                color = colors[i % len(colors)]
+                datasets.append(
+                    {
+                        "label": subject_name,
+                        "data": scores[: len(exam_labels)],  # Ensure same length
+                        "borderColor": color,
+                        "backgroundColor": f"{color}1A",  # Add transparency
+                        "tension": 0.1,
+                    }
+                )
+
+            return Response({"labels": exam_labels, "datasets": datasets})
+
+        except Exception as e:
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in subject trends analytics: {str(e)}")
+
+            return Response({"labels": [], "datasets": [], "error": str(e)})
+
+    @action(detail=False, methods=["get"])
+    def analytics_class_comparison(self, request):
+        """Get class comparison analytics"""
+        try:
+            time_range = request.query_params.get("range", "current_term")
+            exams = self._get_time_filtered_exams(time_range)
+
+            if not exams.exists():
+                return Response({"labels": [], "data": []})
+
+            # Get class performance comparison
+            class_performance = {}
+
+            for exam in exams.select_related("school_class"):
+                class_name = exam.school_class.name
+
+                # Get average score for this class in this exam
+                exam_subjects = ExamSubject.objects.filter(exam=exam)
+                class_avg = ExamResult.objects.filter(
+                    exam_subject__in=exam_subjects, is_absent=False
+                ).aggregate(avg_score=Avg("score"))["avg_score"]
+
+                if class_name not in class_performance:
+                    class_performance[class_name] = []
+
+                if class_avg is not None:
+                    class_performance[class_name].append(float(class_avg))
+
+            # Calculate overall average per class
+            class_averages = {}
+            for class_name, scores in class_performance.items():
+                if scores:
+                    class_averages[class_name] = sum(scores) / len(scores)
+
+            # Prepare data for pie chart
+            labels = list(class_averages.keys())
+            data = list(class_averages.values())
+
+            return Response({"labels": labels, "data": data})
+
+        except Exception as e:
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in class comparison analytics: {str(e)}")
+
+            return Response({"labels": [], "data": [], "error": str(e)})
 
 
 class ExamSubjectViewSet(viewsets.ModelViewSet):
