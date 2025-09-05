@@ -55,7 +55,7 @@ class SchoolAdminViewSet(viewsets.ModelViewSet):
 class AdministratorProfileViewSet(viewsets.ModelViewSet):
     queryset = AdministratorProfile.objects.filter(is_active=True)
     serializer_class = AdministratorProfileSerializer
-    permission_classes = [IsAuthenticated, (IsSchoolAdmin | IsAdministrator)]
+    permission_classes = [IsAuthenticated]
     filter_backends = [
         DjangoFilterBackend,
         filters.SearchFilter,

@@ -2,11 +2,12 @@ from django.db import models
 from django.utils import timezone
 from datetime import timedelta
 from rest_framework import viewsets
+from django.conf import settings
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
-from skul_data.users.permissions.permission import IsAdministrator
+from skul_data.users.permissions.permission import IsAdministrator, IsSchoolAdmin
 from skul_data.analytics.serializers.analytics import (
     AnalyticsAlertSerializer,
     AnalyticsDashboardSerializer,
@@ -73,11 +74,58 @@ from rest_framework import status
 from skul_data.users.models.base_user import User
 
 
+class AnalyticsSchoolPermission:
+    """
+    Custom permission that allows both School Admins and Administrators
+    """
+
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+
+        # Allow School Admins
+        if request.user.user_type == User.SCHOOL_ADMIN:
+            return hasattr(request.user, "school_admin_profile")
+
+        # Allow Administrators
+        if request.user.user_type == User.ADMINISTRATOR:
+            return True
+
+        # Allow Teacher Administrators
+        if request.user.user_type == User.TEACHER:
+            try:
+                return request.user.teacher_profile.is_administrator
+            except Teacher.DoesNotExist:
+                return False
+
+        return False
+
+
 class AnalyticsViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated, IsAdministrator]
+    # Updated permission classes to include School Admins
+    permission_classes = [IsAuthenticated]  # We'll handle the logic in get_school()
 
     def get_school(self):
-        return self.request.user.administered_school
+        """Get the school for the current user with proper permission checking"""
+        user = self.request.user
+
+        # Check permissions first
+        if user.user_type == User.SCHOOL_ADMIN and hasattr(
+            user, "school_admin_profile"
+        ):
+            return user.school_admin_profile.school
+        elif user.user_type == User.ADMINISTRATOR and hasattr(
+            user, "administered_school"
+        ):
+            return user.administered_school
+        elif user.user_type == User.TEACHER and hasattr(user, "teacher_profile"):
+            if user.teacher_profile.is_administrator:
+                return user.teacher_profile.school
+
+        # If no valid permission/school found, raise permission denied
+        from rest_framework.exceptions import PermissionDenied
+
+        raise PermissionDenied("You do not have permission to access analytics data.")
 
     @action(detail=False, methods=["get"])
     def overview(self, request):
@@ -90,38 +138,96 @@ class AnalyticsViewSet(viewsets.ViewSet):
         ).first()
 
         if cached:
-            return Response(cached.data)
+            # Transform the cached data to match frontend expectations
+            transformed_data = self._transform_overview_data(cached.data)
+            return Response(transformed_data)
 
-        # Convert Decimal values to float before caching
-        data = {
-            "most_active_teacher": (
-                dict(get_most_active_teacher(school))
-                if get_most_active_teacher(school)
-                else None
-            ),
-            "student_attendance_rate": float(get_student_attendance_rate(school)),
-            "most_downloaded_document": (
-                dict(get_most_downloaded_document(school))
-                if get_most_downloaded_document(school)
-                else None
-            ),
-            "top_performing_class": (
-                dict(get_top_performing_class(school))
-                if get_top_performing_class(school)
-                else None
-            ),
-            "reports_generated": get_reports_generated_count(school),
-        }
+        # Get fresh data if not cached
+        overview_cache = CachedAnalytics.objects.filter(
+            school=school, analytics_type="overview"
+        ).first()
 
-        # Cache for 1 hour
-        CachedAnalytics.objects.create(
-            school=school,
-            analytics_type="overview",
-            data=data,
-            valid_until=timezone.now() + timedelta(hours=1),
+        if overview_cache:
+            # Transform and return the data
+            transformed_data = self._transform_overview_data(overview_cache.data)
+            return Response(transformed_data)
+
+        # Return empty structure if no data
+        return Response(
+            {
+                "most_active_teacher": {"name": "N/A", "login_count": 0},
+                "student_attendance_rate": 0,
+                "most_downloaded_document": {"title": "N/A", "download_count": 0},
+                "top_performing_class": {"class_name": "N/A", "average_score": 0},
+                "reports_generated": 0,
+                "teacher_activity": [],
+                "attendance_trend": [],
+                "document_usage": [],
+                "class_performance": [],
+            }
         )
 
-        return Response(data)
+    def _transform_overview_data(self, data):
+        """Transform the cached data to match frontend chart expectations"""
+        transformed = data.copy()
+
+        # Transform teacher_activity data for charts
+        if "teacher_activity" in data and isinstance(data["teacher_activity"], list):
+            transformed["teacher_activity"] = [
+                {
+                    "name": teacher.get("user__first_name", "")
+                    + " "
+                    + teacher.get("user__last_name", ""),
+                    "logins": teacher.get("login_count", 0),
+                    "reports": teacher.get("reports_count", 0),
+                }
+                for teacher in data["teacher_activity"][:5]  # Top 5 teachers
+            ]
+        else:
+            transformed["teacher_activity"] = []
+
+        # Transform attendance_trend data for charts
+        if "attendance_trend" in data and isinstance(data["attendance_trend"], list):
+            transformed["attendance_trend"] = [
+                {"date": item.get("date", ""), "attendance": item.get("rate", 0)}
+                for item in data["attendance_trend"]
+            ]
+        else:
+            # Create sample attendance trend data
+            from datetime import datetime, timedelta
+
+            base_date = datetime.now() - timedelta(days=7)
+            transformed["attendance_trend"] = [
+                {
+                    "date": (base_date + timedelta(days=i)).strftime("%Y-%m-%d"),
+                    "attendance": 80 + (i * 2),  # Sample trend
+                }
+                for i in range(7)
+            ]
+
+        # Transform document_usage data for charts
+        if "document_usage" in data and isinstance(data["document_usage"], list):
+            transformed["document_usage"] = [
+                {"name": doc.get("type", "Unknown"), "value": doc.get("count", 0)}
+                for doc in data["document_usage"]
+            ]
+        else:
+            transformed["document_usage"] = []
+
+        # Transform class_performance data for charts
+        if "class_performance" in data and isinstance(data["class_performance"], list):
+            transformed["class_performance"] = [
+                {
+                    "name": cls.get("class_name", "Unknown"),
+                    "average": cls.get("average_score", 0),
+                    "top": cls.get("top_score", 0),
+                }
+                for cls in data["class_performance"]
+            ]
+        else:
+            transformed["class_performance"] = []
+
+        return transformed
 
     @action(detail=False, methods=["get"])
     def teachers(self, request):
@@ -195,6 +301,82 @@ class AnalyticsViewSet(viewsets.ViewSet):
         }
 
         return Response(data)
+
+    # @action(detail=False, methods=["get"])
+    # def documents(self, request):
+    #     """Document-specific analytics with improved error handling"""
+    #     try:
+    #         school = self.get_school()
+    #         if not school:
+    #             return Response(
+    #                 {"error": "School not found"}, status=status.HTTP_400_BAD_REQUEST
+    #             )
+
+    #         # Create serializer instance and validate
+    #         serializer = AnalyticsFilterSerializer(data=request.query_params)
+    #         if not serializer.is_valid():
+    #             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    #         filters = serializer.validated_data
+
+    #         # Log the request for debugging
+    #         print(f"Documents analytics request for school: {school.name}")
+    #         print(f"Filters: {filters}")
+
+    #         # Check for cached data first
+    #         cached = CachedAnalytics.objects.filter(
+    #             school=school,
+    #             analytics_type="documents",
+    #             valid_until__gte=timezone.now(),
+    #         ).first()
+
+    #         if cached:
+    #             print("Returning cached document analytics")
+    #             return Response(cached.data)
+
+    #         # Generate fresh data
+    #         try:
+    #             data = {
+    #                 "total_documents": Document.objects.filter(school=school).count(),
+    #                 "download_frequency": get_document_download_frequency(
+    #                     school, filters
+    #                 ),
+    #                 "types_distribution": get_document_types_distribution(school),
+    #                 "access_by_role": get_document_access_by_role(school, filters),
+    #                 "uploads_by_user": get_uploads_by_user(school, filters),
+    #             }
+
+    #             print(f"Generated document analytics data: {data}")
+
+    #             # Cache the data for 1 hour
+    #             CachedAnalytics.objects.create(
+    #                 school=school,
+    #                 analytics_type="documents",
+    #                 data=data,
+    #                 valid_until=timezone.now() + timedelta(hours=1),
+    #             )
+
+    #             return Response(data)
+
+    #         except Exception as e:
+    #             print(f"Error generating document analytics: {str(e)}")
+    #             return Response(
+    #                 {
+    #                     "error": "Failed to generate analytics data",
+    #                     "details": str(e) if settings.DEBUG else None,
+    #                 },
+    #                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    #             )
+
+    #     except Exception as e:
+    #         print(f"Unexpected error in documents analytics: {str(e)}")
+    #         return Response(
+    #             {
+    #                 "error": "An unexpected error occurred",
+    #                 "details": str(e) if settings.DEBUG else None,
+    #             },
+    #             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    #         )
 
     @action(detail=False, methods=["get"])
     def reports(self, request):
@@ -272,32 +454,44 @@ class AnalyticsViewSet(viewsets.ViewSet):
 class AnalyticsDashboardViewSet(viewsets.ModelViewSet):
     queryset = AnalyticsDashboard.objects.all()
     serializer_class = AnalyticsDashboardSerializer
-    permission_classes = [IsAuthenticated, IsAdministrator]
+    permission_classes = [IsAuthenticated, IsSchoolAdmin]
 
     def get_queryset(self):
-        return (
-            super().get_queryset().filter(school=self.request.user.administered_school)
-        )
+        # Handle both school admin and administrator users
+        user = self.request.user
+        if user.user_type == User.SCHOOL_ADMIN:
+            school = user.school_admin_profile.school
+        else:
+            school = self.request.user.administered_school
+        return super().get_queryset().filter(school=school)
 
     def perform_create(self, serializer):
-        serializer.save(
-            school=self.request.user.administered_school, created_by=self.request.user
-        )
+        user = self.request.user
+        if user.user_type == User.SCHOOL_ADMIN:
+            school = user.school_admin_profile.school
+        else:
+            school = self.request.user.administered_school
+        serializer.save(school=school, created_by=self.request.user)
 
 
 class AnalyticsAlertViewSet(viewsets.ModelViewSet):
     queryset = AnalyticsAlert.objects.all()
     serializer_class = AnalyticsAlertSerializer
-    permission_classes = [IsAuthenticated, IsAdministrator]
+    permission_classes = [IsAuthenticated, IsSchoolAdmin]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["alert_type", "is_read", "school"]
 
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return AnalyticsAlert.objects.none()
-        return (
-            super().get_queryset().filter(school=self.request.user.administered_school)
-        )
+
+        # Handle both school admin and administrator users
+        user = self.request.user
+        if user.user_type == User.SCHOOL_ADMIN:
+            school = user.school_admin_profile.school
+        else:
+            school = self.request.user.administered_school
+        return super().get_queryset().filter(school=school)
 
     @action(detail=True, methods=["post"])
     def mark_read(self, request, pk=None):
@@ -343,7 +537,11 @@ class AnalyticsAlertViewSet(viewsets.ModelViewSet):
                 "filter_criteria": {
                     "alert_type": request.query_params.get("alert_type"),
                     "is_read": request.query_params.get("is_read"),
-                    "school": str(request.user.administered_school.id),
+                    "school": str(
+                        request.user.school_admin_profile.school.id
+                        if request.user.user_type == User.SCHOOL_ADMIN
+                        else request.user.administered_school.id
+                    ),
                 },
             },
         )

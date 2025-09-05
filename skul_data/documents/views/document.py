@@ -85,6 +85,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
         "related_class",
         "uploaded_by",
         "is_public",
+        "is_template",
     ]
 
     def get_permissions(self):
@@ -339,6 +340,14 @@ class DocumentViewSet(viewsets.ModelViewSet):
         response = FileResponse(zip_buffer, content_type="application/zip")
         response["Content-Disposition"] = 'attachment; filename="documents.zip"'
         return response
+
+    @action(detail=False)
+    def shared_with_me(self, request):
+        queryset = self.filter_queryset(self.get_queryset()).filter(
+            allowed_users=request.user
+        )
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
 
 class DocumentShareLinkViewSet(viewsets.ModelViewSet):

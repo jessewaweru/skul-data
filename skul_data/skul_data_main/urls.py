@@ -41,7 +41,11 @@ urlpatterns = [
                     "token/refresh/", TokenRefreshView.as_view(), name="token_refresh"
                 ),
                 # App routes
-                path("users/", include("skul_data.users.urls")),
+                # path("users/", include("skul_data.users.urls")),
+                path(
+                    "users/",
+                    include(("skul_data.users.urls", "users"), namespace="users"),
+                ),
                 path(
                     "schools/",
                     include(("skul_data.schools.urls", "schools"), namespace="schools"),

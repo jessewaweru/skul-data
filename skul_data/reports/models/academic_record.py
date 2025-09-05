@@ -58,7 +58,7 @@ class AcademicRecord(models.Model):
         verbose_name_plural = "Academic Records"
 
     def __str__(self):
-        return f"{self.student} - {self.subject} ({self.term} {self.school_year})"
+        return f"{self.student} - {self.subject.name if self.subject else 'No Subject'} ({self.term} {self.school_year})"
 
     def save(self, *args, **kwargs):
         # Calculate grade when the record is new or the score has changed

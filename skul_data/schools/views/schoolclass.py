@@ -1,3 +1,4 @@
+from venv import logger
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -28,6 +29,7 @@ from rest_framework.exceptions import PermissionDenied
 from skul_data.users.models.school_admin import SchoolAdmin
 from skul_data.action_logs.utils.action_log import log_action
 from skul_data.action_logs.models.action_log import ActionCategory
+from skul_data.reports.models.academic_record import AcademicRecord
 
 
 class SchoolClassViewSet(viewsets.ModelViewSet):
@@ -72,6 +74,13 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
 
         if not user.is_authenticated:
             return SchoolClass.objects.none()
+
+        # Optimize queries with select_related and prefetch_related
+        queryset = queryset.select_related(
+            "school", "stream", "class_teacher__user"
+        ).prefetch_related(
+            "students__parent__user", "students__guardians__user", "subjects"
+        )
 
         # Get school for admin
         if user.user_type == User.SCHOOL_ADMIN:
@@ -173,46 +182,351 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
                 {"error": "Teacher not found"}, status=status.HTTP_404_NOT_FOUND
             )
 
-    @action(detail=False, methods=["get"])
-    def analytics(self, request):
-        """Class analytics for dashboard"""
-        # Log the analytics view
-        # Log the analytics view
+    # @action(detail=False, methods=["get"])
+    # def analytics(self, request):
+    #     """Class analytics for dashboard"""
+    #     # Log the analytics view
+    #     # Log the analytics view
+    #     log_action(
+    #         user=request.user,
+    #         action="Viewed class analytics",
+    #         category=ActionCategory.VIEW,
+    #         metadata={"path": request.path, "query_params": dict(request.GET)},
+    #     )
+
+    #     queryset = self.filter_queryset(self.get_queryset())
+
+    #     # Basic counts
+    #     total_classes = queryset.count()
+    #     classes_by_level = queryset.values("level").annotate(count=Count("id"))
+    #     classes_by_grade = queryset.values("grade_level").annotate(count=Count("id"))
+
+    #     # Student distribution
+    #     student_distribution = (
+    #         queryset.annotate(student_count=Count("students"))
+    #         .values("name", "student_count")
+    #         .order_by("-student_count")
+    #     )
+
+    #     # Performance analytics
+    #     performance_data = (
+    #         queryset.annotate(avg_performance=Avg("students__academic_records__score"))
+    #         .values("name", "avg_performance")
+    #         .order_by("-avg_performance")
+    #     )
+
+    #     return Response(
+    #         {
+    #             "total_classes": total_classes,
+    #             "classes_by_level": classes_by_level,
+    #             "classes_by_grade": classes_by_grade,
+    #             "student_distribution": student_distribution,
+    #             "performance_data": performance_data,
+    #         }
+    #     )
+
+    @action(detail=True, methods=["get"], url_path="analytics")
+    def analytics(self, request, pk=None):
+        """Detailed analytics for a specific class"""
+        try:
+            class_instance = self.get_object()
+
+            # Debug logging
+            logger.info(
+                f"Generating analytics for class: {class_instance.name} (ID: {class_instance.id})"
+            )
+
+            # Get basic class info
+            class_info = {
+                "class_id": class_instance.id,
+                "class_name": class_instance.name,
+                "grade_level": class_instance.grade_level,
+                "stream": class_instance.stream.name if class_instance.stream else None,
+                "academic_year": class_instance.academic_year,
+            }
+
+            # Get students in the class
+            class_students = class_instance.students.all()
+            total_students = class_students.count()
+
+            logger.info(f"Total students in class: {total_students}")
+
+            # Initialize default values
+            avg_performance = 0
+            attendance_rate = 0
+            performance_distribution = {"a": 0, "b": 0, "c": 0, "d": 0, "e": 0, "f": 0}
+            subject_performance = []
+            attendance_by_month = []
+            top_student = None
+
+            # Get attendance data (last 6 months) - Check if attendance records exist
+            try:
+                six_months_ago = timezone.now() - timedelta(days=180)
+                attendance_records = class_instance.attendances.filter(
+                    date__gte=six_months_ago
+                ).order_by("-date")
+
+                # Process attendance records
+                for record in attendance_records[:6]:  # Limit to 6 records
+                    try:
+                        present_count = (
+                            record.present_students.count()
+                            if hasattr(record, "present_students")
+                            else 0
+                        )
+                        total_count = (
+                            record.total_students
+                            if hasattr(record, "total_students")
+                            else total_students
+                        )
+                        rate = (
+                            (present_count / total_count * 100)
+                            if total_count > 0
+                            else 0
+                        )
+
+                        attendance_by_month.append(
+                            {
+                                "month": record.date.strftime("%b %Y"),
+                                "attendance_rate": round(rate, 1),
+                                "present": present_count,
+                                "total": total_count,
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning(f"Error processing attendance record: {str(e)}")
+
+                # Get latest attendance rate
+                latest_attendance = attendance_records.first()
+                if latest_attendance:
+                    try:
+                        present_count = (
+                            latest_attendance.present_students.count()
+                            if hasattr(latest_attendance, "present_students")
+                            else 0
+                        )
+                        total_count = (
+                            latest_attendance.total_students
+                            if hasattr(latest_attendance, "total_students")
+                            else total_students
+                        )
+                        attendance_rate = (
+                            (present_count / total_count * 100)
+                            if total_count > 0
+                            else 0
+                        )
+                    except:
+                        attendance_rate = 0
+            except Exception as e:
+                logger.warning(f"Error processing attendance data: {str(e)}")
+
+            # Get performance data - Check if academic records exist
+            try:
+                academic_records = AcademicRecord.objects.filter(
+                    student__in=class_students
+                )
+
+                logger.info(f"Found {academic_records.count()} academic records")
+
+                if academic_records.exists():
+                    # Performance distribution
+                    total_records = academic_records.count()
+                    performance_distribution = {
+                        "a": academic_records.filter(score__gte=80).count(),
+                        "b": academic_records.filter(
+                            score__gte=70, score__lt=80
+                        ).count(),
+                        "c": academic_records.filter(
+                            score__gte=60, score__lt=70
+                        ).count(),
+                        "d": academic_records.filter(
+                            score__gte=50, score__lt=60
+                        ).count(),
+                        "e": academic_records.filter(
+                            score__gte=40, score__lt=50
+                        ).count(),
+                        "f": academic_records.filter(score__lt=40).count(),
+                    }
+
+                    # Calculate average performance
+                    avg_performance = (
+                        academic_records.aggregate(avg_score=Avg("score"))["avg_score"]
+                        or 0
+                    )
+
+                    # Subject performance
+                    subjects = class_instance.subjects.all()
+                    for subject in subjects:
+                        try:
+                            subject_records = academic_records.filter(subject=subject)
+                            if subject_records.exists():
+                                subject_avg = (
+                                    subject_records.aggregate(avg=Avg("score"))["avg"]
+                                    or 0
+                                )
+                                top_student_record = subject_records.order_by(
+                                    "-score"
+                                ).first()
+
+                                subject_performance.append(
+                                    {
+                                        "name": subject.name,
+                                        "average_score": round(subject_avg, 2),
+                                        "top_student": {
+                                            "name": (
+                                                top_student_record.student.user.get_full_name()
+                                                if top_student_record
+                                                and hasattr(
+                                                    top_student_record.student, "user"
+                                                )
+                                                else "N/A"
+                                            ),
+                                            "score": (
+                                                round(top_student_record.score, 2)
+                                                if top_student_record
+                                                else 0
+                                            ),
+                                        },
+                                    }
+                                )
+                        except Exception as e:
+                            logger.warning(
+                                f"Error processing subject {subject.name}: {str(e)}"
+                            )
+
+                    # Top student overall
+                    try:
+                        top_student_data = (
+                            class_students.annotate(
+                                avg_score=Avg("academic_records__score")
+                            )
+                            .exclude(avg_score__isnull=True)
+                            .order_by("-avg_score")
+                            .first()
+                        )
+
+                        if top_student_data and top_student_data.avg_score:
+                            top_student = {
+                                "name": (
+                                    top_student_data.user.get_full_name()
+                                    if hasattr(top_student_data, "user")
+                                    else "N/A"
+                                ),
+                                "score": round(top_student_data.avg_score, 2),
+                            }
+                    except Exception as e:
+                        logger.warning(f"Error finding top student: {str(e)}")
+
+            except Exception as e:
+                logger.warning(f"Error processing academic records: {str(e)}")
+
+            # Build response data
+            response_data = {
+                **class_info,
+                "average_performance": round(avg_performance, 2),
+                "attendance_rate": round(attendance_rate, 2),
+                "performance_distribution": performance_distribution,
+                "subject_performance": subject_performance,
+                "attendance_by_month": attendance_by_month,
+                "top_student": top_student,
+                "performance_trend": "up",  # Placeholder - implement actual trend calculation
+                "performance_change": 5.2,  # Placeholder
+                "attendance_trend": "up",  # Placeholder
+                "attendance_change": 3.1,  # Placeholder
+                "total_students": total_students,
+            }
+
+            logger.info(
+                f"Successfully generated analytics for class {class_instance.name}"
+            )
+            return Response(response_data)
+
+        except Exception as e:
+            logger.error(f"Error generating class analytics: {str(e)}")
+            logger.exception("Full traceback:")  # This will log the full stack trace
+            return Response(
+                {"error": "Failed to generate analytics data"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @action(detail=True, methods=["get"])
+    def attendance_stats(self, request, pk=None):
+        """Get attendance statistics for a specific class"""
+        class_instance = self.get_object()
+
+        # Log the stats view
         log_action(
             user=request.user,
-            action="Viewed class analytics",
+            action=f"Viewed attendance stats for {class_instance.name}",
             category=ActionCategory.VIEW,
-            metadata={"path": request.path, "query_params": dict(request.GET)},
+            obj=class_instance,
+            metadata={"class_id": class_instance.id},
         )
 
-        queryset = self.filter_queryset(self.get_queryset())
+        # Get all attendance records for this class
+        attendance_records = ClassAttendance.objects.filter(
+            school_class=class_instance
+        ).order_by("-date")
 
-        # Basic counts
-        total_classes = queryset.count()
-        classes_by_level = queryset.values("level").annotate(count=Count("id"))
-        classes_by_grade = queryset.values("grade_level").annotate(count=Count("id"))
+        if not attendance_records.exists():
+            return Response(
+                {
+                    "current_attendance_rate": 0,
+                    "total_students": class_instance.students.count(),
+                    "best_day": None,
+                    "worst_day": None,
+                    "total_records": 0,
+                }
+            )
 
-        # Student distribution
-        student_distribution = (
-            queryset.annotate(student_count=Count("students"))
-            .values("name", "student_count")
-            .order_by("-student_count")
+        # Calculate statistics
+        total_students = class_instance.students.count()
+        attendance_rates = []
+
+        for record in attendance_records:
+            present_count = record.present_students.count()
+            rate = (present_count / total_students * 100) if total_students > 0 else 0
+            attendance_rates.append(
+                {
+                    "date": record.date,
+                    "rate": rate,
+                    "present": present_count,
+                    "total": total_students,
+                }
+            )
+
+        # Current (average) attendance rate
+        current_rate = sum(r["rate"] for r in attendance_rates) / len(attendance_rates)
+
+        # Best and worst days
+        best_day = (
+            max(attendance_rates, key=lambda x: x["rate"]) if attendance_rates else None
         )
-
-        # Performance analytics
-        performance_data = (
-            queryset.annotate(avg_performance=Avg("students__academic_records__score"))
-            .values("name", "avg_performance")
-            .order_by("-avg_performance")
+        worst_day = (
+            min(attendance_rates, key=lambda x: x["rate"]) if attendance_rates else None
         )
 
         return Response(
             {
-                "total_classes": total_classes,
-                "classes_by_level": classes_by_level,
-                "classes_by_grade": classes_by_grade,
-                "student_distribution": student_distribution,
-                "performance_data": performance_data,
+                "current_attendance_rate": round(current_rate, 2),
+                "total_students": total_students,
+                "best_day": (
+                    {
+                        "date": best_day["date"].strftime("%Y-%m-%d"),
+                        "rate": round(best_day["rate"], 1),
+                    }
+                    if best_day
+                    else None
+                ),
+                "worst_day": (
+                    {
+                        "date": worst_day["date"].strftime("%Y-%m-%d"),
+                        "rate": round(worst_day["rate"], 1),
+                    }
+                    if worst_day
+                    else None
+                ),
+                "total_records": len(attendance_rates),
             }
         )
 
@@ -269,28 +583,58 @@ class ClassDocumentViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
 
+        print(f"DEBUG: User type: {user.user_type}")
+        print(f"DEBUG: User: {user}")
+
         # Get the user's school
         school = None
         if user.user_type == User.SCHOOL_ADMIN:
             try:
-                school = user.schooladmin.school
-            except AttributeError:
-                return ClassDocument.objects.none()
+                # Fix: Use school_admin_profile instead of schooladmin
+                school = user.school_admin_profile.school
+                print(f"DEBUG: School from admin profile: {school}")
+            except AttributeError as e:
+                print(f"DEBUG: Error accessing school admin profile: {e}")
+                # Fallback: try direct school attribute
+                if hasattr(user, "school"):
+                    school = user.school
+                    print(f"DEBUG: School from direct attribute: {school}")
+                else:
+                    print("DEBUG: No school found for user")
+                    return ClassDocument.objects.none()
         elif hasattr(user, "school"):
             school = user.school
+            print(f"DEBUG: School from direct attribute: {school}")
 
         if not school:
+            print("DEBUG: No school found, returning empty queryset")
             return ClassDocument.objects.none()
 
         # Filter by school
         queryset = queryset.filter(school_class__school=school)
+        print(f"DEBUG: Queryset after school filter: {queryset.count()} documents")
 
-        # Teachers can only see documents for classes they teach
+        # For debugging: let's see what documents exist for this school
+        all_docs_for_school = ClassDocument.objects.filter(school_class__school=school)
+        print(
+            f"DEBUG: Total documents for school {school}: {all_docs_for_school.count()}"
+        )
+        for doc in all_docs_for_school:
+            print(
+                f"  - {doc.title} (Class: {doc.school_class.id} - {doc.school_class.name})"
+            )
+
+        # Temporarily remove teacher restriction to test
+        # TODO: Re-enable this after confirming documents are visible
         if user.user_type == "teacher":
-            return queryset.filter(
+            teacher_queryset = queryset.filter(
                 models.Q(school_class__class_teacher=user.teacher_profile)
                 | models.Q(created_by=user)
             )
+            print(
+                f"DEBUG: Teacher filtered queryset: {teacher_queryset.count()} documents"
+            )
+            return teacher_queryset
 
         return queryset
 

@@ -25,6 +25,8 @@ class BaseUserSerializer(serializers.ModelSerializer):
             "is_staff",
             "role",
             "role_id",
+            "is_administrator",  # Add this
+            "last_login",  # Add this
         ]
         read_only_fields = ["id", "user_tag", "is_staff"]
 
@@ -37,6 +39,9 @@ class UserDetailSerializer(BaseUserSerializer):
     )  # Changed from schooladmin_profile to match your model
     sessions = serializers.SerializerMethodField()  # Add this for user sessions
     school_id = serializers.SerializerMethodField()
+    is_administrator = serializers.SerializerMethodField()
+    last_login = serializers.DateTimeField(source="user.last_login", read_only=True)
+    status = serializers.SerializerMethodField()
 
     class Meta(BaseUserSerializer.Meta):
         fields = BaseUserSerializer.Meta.fields + [
@@ -46,6 +51,9 @@ class UserDetailSerializer(BaseUserSerializer):
             "school_id",
             "school_admin_profile",
             "school",
+            "is_administrator",
+            "last_login",
+            "status",
         ]
 
     def get_teacher_profile(self, obj):
@@ -152,3 +160,9 @@ class UserDetailSerializer(BaseUserSerializer):
                 "code": school.code,
             }
         return None
+
+    def get_is_administrator(self, obj):
+        return obj.is_administrator or obj.user_type == User.ADMINISTRATOR
+
+    def get_status(self, obj):
+        return "Active" if obj.is_active else "Inactive"

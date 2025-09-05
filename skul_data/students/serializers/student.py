@@ -195,7 +195,6 @@ class StudentSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True,
     )
-    # teacher = TeacherSerializer(read_only=True)
     teacher_name = serializers.SerializerMethodField()
     teacher_id = serializers.PrimaryKeyRelatedField(
         queryset=Teacher.objects.all(),
@@ -239,24 +238,21 @@ class StudentSerializer(serializers.ModelSerializer):
             return f"{obj.teacher.user.first_name} {obj.teacher.user.last_name}"
         return None
 
-    def get_teacher_details(self, obj):
-        # Import inside method to avoid circular dependency
-        from skul_data.users.serializers.teacher import TeacherSerializer
-
-        if obj.teacher:
-            return TeacherSerializer(obj.teacher).data
-        return None
-
     def to_representation(self, instance):
         # Import here to avoid circular import of student_class
         from skul_data.schools.serializers.schoolclass import SchoolClassSerializer
 
         ret = super().to_representation(instance)
-        ret["student_class"] = (
-            SchoolClassSerializer(instance.student_class).data
-            if instance.student_class
-            else None
-        )
+
+        # Only include student_class if not in a nested context
+        request = self.context.get("request")
+        if not getattr(self, "_nested_in_class", False):
+            ret["student_class"] = (
+                SchoolClassSerializer(instance.student_class).data
+                if instance.student_class
+                else None
+            )
+
         return ret
 
     def validate_admission_date(self, value):
@@ -265,7 +261,6 @@ class StudentSerializer(serializers.ModelSerializer):
         return value
 
     def validate_status(self, value):
-        # Prevent direct status updates (should use status change endpoint)
         if self.instance and self.instance.status != value:
             raise serializers.ValidationError(
                 "Status cannot be updated directly. Use the status change endpoint."
@@ -273,7 +268,6 @@ class StudentSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, data):
-        # Ensure student class belongs to the same school
         student_class = data.get("student_class")
         school = data.get("school")
 
@@ -285,13 +279,75 @@ class StudentSerializer(serializers.ModelSerializer):
         return data
 
     def get_phone_number(self, obj):
-        return obj.phone_number
+        """Get primary parent's phone number - with error handling"""
+        try:
+            if hasattr(obj, "parent") and obj.parent:
+                return obj.parent.phone_number
+
+            # Use select_related to avoid additional queries
+            if hasattr(obj, "guardians"):
+                guardian = obj.guardians.first()
+                if guardian:
+                    return guardian.phone_number
+        except Exception as e:
+            # Log the error if needed, but don't crash
+            print(f"Error getting phone_number for student {obj.id}: {e}")
+            return None
+        return None
 
     def get_email(self, obj):
-        return obj.email
+        """Get primary parent's email - with error handling"""
+        try:
+            if hasattr(obj, "parent") and obj.parent:
+                return obj.parent.user.email
+
+            if hasattr(obj, "guardians"):
+                guardian = obj.guardians.first()
+                if guardian:
+                    return guardian.user.email
+        except Exception as e:
+            print(f"Error getting email for student {obj.id}: {e}")
+            return None
+        return None
 
     def get_address(self, obj):
-        return obj.address
+        """Get primary parent's address - with error handling"""
+        try:
+            if hasattr(obj, "parent") and obj.parent:
+                return obj.parent.address
+
+            if hasattr(obj, "guardians"):
+                guardian = obj.guardians.first()
+                if guardian:
+                    return guardian.address
+        except Exception as e:
+            print(f"Error getting address for student {obj.id}: {e}")
+            return None
+        return None
+
+
+# Create a simplified serializer for use in SchoolClass serialization
+class StudentBasicSerializer(serializers.ModelSerializer):
+    """Simplified student serializer to avoid recursion in class serialization"""
+
+    age = serializers.ReadOnlyField()
+    full_name = serializers.ReadOnlyField()
+
+    class Meta:
+        model = Student
+        fields = [
+            "id",
+            "first_name",
+            "middle_name",
+            "last_name",
+            "full_name",
+            "admission_number",
+            "date_of_birth",
+            "age",
+            "gender",
+            "status",
+            "admission_date",
+        ]
 
 
 class StudentAttendanceSerializer(serializers.ModelSerializer):

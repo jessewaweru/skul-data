@@ -66,6 +66,8 @@ class AdministratorProfileSerializer(serializers.ModelSerializer):
     # Add basic school info as nested fields (similar to user fields)
     school_id = serializers.IntegerField(source="school.id", read_only=True)
     school_name = serializers.CharField(source="school.name", read_only=True)
+    is_active = serializers.BooleanField()
+    access_level = serializers.CharField()
 
     class Meta:
         model = AdministratorProfile

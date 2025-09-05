@@ -112,16 +112,34 @@ class User(AbstractUser):
         # Call the parent save method with *args, **kwargs
         super().save(*args, **kwargs)
 
+    # @property
+    # def school(self):
+    #     """Returns the school associated with this user based on their role."""
+    #     if hasattr(self, "school_admin_profile"):
+    #         return self.school_admin_profile.school
+    #     elif hasattr(self, "teacher_profile"):
+    #         return self.teacher_profile.school
+    #     elif hasattr(self, "parent_profile"):
+    #         return self.parent_profile.school
+    #     return None
+
     @property
     def school(self):
-        """Returns the school associated with this user based on their role."""
-        if hasattr(self, "school_admin_profile"):
-            return self.school_admin_profile.school
-        elif hasattr(self, "teacher_profile"):
-            return self.teacher_profile.school
-        elif hasattr(self, "parent_profile"):
-            return self.parent_profile.school
-        return None
+        """Returns the school associated with this user"""
+        # Check all possible profile relationships
+        profiles = [
+            getattr(self, "school_admin_profile", None),
+            getattr(self, "teacher_profile", None),
+            getattr(self, "parent_profile", None),
+            getattr(self, "administrator_profile", None),
+        ]
+
+        # Return the first valid school found
+        for profile in profiles:
+            if profile and profile.school:
+                return profile.school
+
+        return None  # Explicit return if no school found
 
     @property
     def primary_profile(self):
