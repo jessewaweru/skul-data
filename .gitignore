@@ -10,6 +10,10 @@ env/
 __pycache__/
 *.pyc
 
+bin/
+lib/
+pyvenv.cfg
+
 # Django migrations (do NOT ignore these, but this is just to clarify if you have any other temporary files)
 *.log
 
