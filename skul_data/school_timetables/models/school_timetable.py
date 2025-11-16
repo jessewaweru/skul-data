@@ -80,6 +80,22 @@ class TimeSlot(models.Model):
         if self.start_time >= self.end_time:
             raise ValidationError("End time must be after start time")
 
+    # In TimeSlot model, fix the save method and add proper ordering
+    def save(self, *args, **kwargs):
+        # Set day_order based on day_of_week
+        self.day_order = self.DAY_ORDER.get(self.day_of_week, 1)
+
+        # Auto-generate name if not provided and not a break
+        if not self.name and not self.is_break:
+            self.name = f"Period {self.order}"
+
+        super().save(*args, **kwargs)
+
+    # Also update the Meta ordering
+    class Meta:
+        unique_together = ("school", "start_time", "end_time", "day_of_week")
+        ordering = ["day_order", "start_time", "order"]  # More precise ordering
+
 
 class TimetableStructure(models.Model):
     """Defines the structure of timetables for a school"""
@@ -135,123 +151,140 @@ class TimetableStructure(models.Model):
         ordering = ["-created_at"]
 
     def generate_time_slots(self):
-        """Generate standard time slots with all breaks and special periods"""
+        """Generate time slots with proper unique identifiers"""
         from datetime import datetime, time, timedelta
 
+        # Clear existing time slots
         TimeSlot.objects.filter(school=self.school).delete()
 
-        # Calculate durations
-        period_duration = timedelta(minutes=self.period_duration)
-        break_duration = timedelta(minutes=self.break_duration)
-        lunch_duration = timedelta(minutes=self.lunch_duration)
-        games_duration = timedelta(minutes=self.games_duration)
-        preps_duration = timedelta(minutes=self.preps_duration)
+        DAY_ORDER = {
+            "MON": 1,
+            "TUE": 2,
+            "WED": 3,
+            "THU": 4,
+            "FRI": 5,
+            "SAT": 6,
+            "SUN": 7,
+        }
 
+        # Define unique time periods (these will repeat across days)
+        period_templates = []
+        current_time = datetime.combine(datetime.today(), self.default_start_time)
+        end_time = datetime.combine(datetime.today(), self.default_end_time)
+        period_number = 1
+
+        # Morning periods (before 10:00)
+        morning_end = datetime.combine(datetime.today(), time(10, 0))
+        while current_time + timedelta(minutes=self.period_duration) <= morning_end:
+            slot_end = current_time + timedelta(minutes=self.period_duration)
+            period_templates.append(
+                {
+                    "name": f"Period {period_number}",
+                    "start_time": current_time.time(),
+                    "end_time": slot_end.time(),
+                    "is_break": False,
+                    "order": period_number,
+                }
+            )
+            current_time = slot_end
+            period_number += 1
+
+        # Short break
+        if current_time + timedelta(minutes=self.break_duration) <= end_time:
+            break_end = current_time + timedelta(minutes=self.break_duration)
+            period_templates.append(
+                {
+                    "name": "Short Break",
+                    "start_time": current_time.time(),
+                    "end_time": break_end.time(),
+                    "is_break": True,
+                    "break_name": "Short Break",
+                    "order": period_number,
+                }
+            )
+            current_time = break_end
+            period_number += 1
+
+        # Pre-lunch periods (10:30-12:30)
+        lunch_start = datetime.combine(datetime.today(), time(12, 30))
+        while current_time + timedelta(minutes=self.period_duration) <= lunch_start:
+            slot_end = current_time + timedelta(minutes=self.period_duration)
+            period_templates.append(
+                {
+                    "name": f"Period {period_number}",
+                    "start_time": current_time.time(),
+                    "end_time": slot_end.time(),
+                    "is_break": False,
+                    "order": period_number,
+                }
+            )
+            current_time = slot_end
+            period_number += 1
+
+        # Lunch break
+        if current_time + timedelta(minutes=self.lunch_duration) <= end_time:
+            lunch_end = current_time + timedelta(minutes=self.lunch_duration)
+            period_templates.append(
+                {
+                    "name": "Lunch Break",
+                    "start_time": current_time.time(),
+                    "end_time": lunch_end.time(),
+                    "is_break": True,
+                    "break_name": "Lunch",
+                    "order": period_number,
+                }
+            )
+            current_time = lunch_end
+            period_number += 1
+
+        # Afternoon periods
+        afternoon_end = datetime.combine(datetime.today(), time(15, 0))
+        while current_time + timedelta(minutes=self.period_duration) <= afternoon_end:
+            slot_end = current_time + timedelta(minutes=self.period_duration)
+            period_templates.append(
+                {
+                    "name": f"Period {period_number}",
+                    "start_time": current_time.time(),
+                    "end_time": slot_end.time(),
+                    "is_break": False,
+                    "order": period_number,
+                }
+            )
+            current_time = slot_end
+            period_number += 1
+
+        # Games (if enabled)
+        if (
+            self.include_games
+            and current_time + timedelta(minutes=self.games_duration) <= end_time
+        ):
+            games_end = current_time + timedelta(minutes=self.games_duration)
+            period_templates.append(
+                {
+                    "name": "Games",
+                    "start_time": current_time.time(),
+                    "end_time": games_end.time(),
+                    "is_break": True,
+                    "break_name": "Games",
+                    "order": period_number,
+                }
+            )
+            current_time = games_end
+            period_number += 1
+
+        # Now create these templates for each day
+        slots_created = 0
         for day in self.days_of_week:
-            current_time = datetime.combine(datetime.today(), self.default_start_time)
-            end_time = datetime.combine(datetime.today(), self.default_end_time)
-            period_number = 1
-
-            # Morning session
-            while current_time + period_duration <= datetime.combine(
-                datetime.today(), time(10, 0)
-            ):
+            for template in period_templates:
                 TimeSlot.objects.create(
                     school=self.school,
-                    name=f"Period {period_number}",
-                    start_time=current_time.time(),
-                    end_time=(current_time + period_duration).time(),
                     day_of_week=day,
-                    order=period_number,
+                    day_order=DAY_ORDER.get(day, 1),
+                    **template,
                 )
-                current_time += period_duration
-                period_number += 1
+                slots_created += 1
 
-            # Short break
-            TimeSlot.objects.create(
-                school=self.school,
-                name="Short Break",
-                start_time=current_time.time(),
-                end_time=(current_time + break_duration).time(),
-                day_of_week=day,
-                is_break=True,
-                break_name="Short Break",
-                order=period_number,
-            )
-            current_time += break_duration
-            period_number += 1
-
-            # Pre-lunch session
-            while current_time + period_duration <= datetime.combine(
-                datetime.today(), time(12, 30)
-            ):
-                TimeSlot.objects.create(
-                    school=self.school,
-                    name=f"Period {period_number}",
-                    start_time=current_time.time(),
-                    end_time=(current_time + period_duration).time(),
-                    day_of_week=day,
-                    order=period_number,
-                )
-                current_time += period_duration
-                period_number += 1
-
-            # Lunch break
-            TimeSlot.objects.create(
-                school=self.school,
-                name="Lunch Break",
-                start_time=current_time.time(),
-                end_time=(current_time + lunch_duration).time(),
-                day_of_week=day,
-                is_break=True,
-                break_name="Lunch",
-                order=period_number,
-            )
-            current_time += lunch_duration
-            period_number += 1
-
-            # Afternoon session
-            while current_time + period_duration <= datetime.combine(
-                datetime.today(), time(15, 0)
-            ):
-                TimeSlot.objects.create(
-                    school=self.school,
-                    name=f"Period {period_number}",
-                    start_time=current_time.time(),
-                    end_time=(current_time + period_duration).time(),
-                    day_of_week=day,
-                    order=period_number,
-                )
-                current_time += period_duration
-                period_number += 1
-
-            # Games period (if enabled)
-            if self.include_games and current_time + games_duration <= end_time:
-                TimeSlot.objects.create(
-                    school=self.school,
-                    name="Games",
-                    start_time=current_time.time(),
-                    end_time=(current_time + games_duration).time(),
-                    day_of_week=day,
-                    is_break=True,
-                    break_name="Games",
-                    order=period_number,
-                )
-                current_time += games_duration
-                period_number += 1
-
-            # Preps period (if enabled)
-            if self.include_preps and current_time + preps_duration <= end_time:
-                TimeSlot.objects.create(
-                    school=self.school,
-                    name="Preps",
-                    start_time=current_time.time(),
-                    end_time=(current_time + preps_duration).time(),
-                    day_of_week=day,
-                    is_break=True,
-                    break_name="Preps",
-                    order=period_number,
-                )
+        return slots_created
 
 
 class Timetable(models.Model):
