@@ -1,3 +1,4 @@
+from urllib import request
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -32,6 +33,8 @@ from skul_data.action_logs.models.action_log import ActionCategory
 import random
 from django.core.exceptions import PermissionDenied
 from skul_data.users.models.base_user import User
+from rest_framework import serializers
+from skul_data.students.models.student import Subject
 
 
 class TimeSlotViewSet(viewsets.ModelViewSet):
@@ -158,6 +161,22 @@ class TimetableViewSet(viewsets.ModelViewSet):
         term = data["term"]
         regenerate = data["regenerate_existing"]
         apply_constraints = data["apply_constraints"]
+        subject_assignments = data.get("subject_assignments", [])  # GET ASSIGNMENTS
+
+        # Log what we received
+        print(f"\n{'='*60}")
+        print(f"GENERATE TIMETABLE REQUEST")
+        print(f"{'='*60}")
+        print(f"Classes: {class_ids}")
+        print(f"Subject assignments received: {len(subject_assignments)}")
+
+        if subject_assignments:
+            print("Subjects:")
+            for assign in subject_assignments:
+                print(
+                    f"  - {assign.get('subject_name')} (ID: {assign.get('subject_id')}) "
+                    f"Teacher: {assign.get('teacher_id')}, Periods: {assign.get('required_periods')}"
+                )
 
         # Get the classes
         classes = SchoolClass.objects.filter(id__in=class_ids)
@@ -172,23 +191,48 @@ class TimetableViewSet(viewsets.ModelViewSet):
             school_class__in=classes, academic_year=academic_year, term=term
         )
 
-        if existing_timetables.exists() and not regenerate:
-            return Response(
-                {"error": "Timetables already exist for these classes in this term"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Delete existing if regenerating
-        if regenerate:
+        if existing_timetables.exists():
+            if not regenerate:
+                return Response(
+                    {
+                        "error": "Timetables already exist for these classes in this term",
+                        "detail": "Set regenerate_existing to true to overwrite",
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            print(f"Deleting {existing_timetables.count()} existing timetables")
             existing_timetables.delete()
 
         # Generate timetables
         timetables = []
+        errors = []
+
         for school_class in classes:
-            timetable = self._generate_timetable(
-                school_class, academic_year, term, apply_constraints
+            try:
+                timetable = self._generate_timetable(
+                    school_class,
+                    academic_year,
+                    term,
+                    apply_constraints,
+                    subject_assignments,  # PASS ASSIGNMENTS
+                )
+                timetables.append(timetable)
+
+            except Exception as e:
+                error_msg = (
+                    f"Error generating timetable for {school_class.name}: {str(e)}"
+                )
+                errors.append(error_msg)
+                print(error_msg)
+                import traceback
+
+                traceback.print_exc()
+
+        if not timetables:
+            return Response(
+                {"error": "Failed to generate any timetables", "details": errors},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-            timetables.append(timetable)
 
         log_action(
             user=request.user,
@@ -199,17 +243,67 @@ class TimetableViewSet(viewsets.ModelViewSet):
                 "academic_year": academic_year,
                 "term": term,
                 "apply_constraints": apply_constraints,
+                "errors": errors,
             },
         )
 
-        return Response(
-            TimetableSerializer(timetables, many=True).data,
-            status=status.HTTP_201_CREATED,
-        )
+        # Return detailed response
+        response_data = {
+            "id": timetables[0].id if timetables else None,
+            "academic_year": academic_year,
+            "term": term,
+            "is_active": False,
+            "classes": [
+                {
+                    "id": tt.school_class.id,
+                    "name": tt.school_class.name,
+                }
+                for tt in timetables
+            ],
+            "lessons": [],
+            "time_slots": [],
+            "errors": errors,
+        }
 
-    def _generate_timetable(self, school_class, academic_year, term, apply_constraints):
-        """Generate a timetable for a single class with constraints"""
-        # Create the timetable
+        # Add lessons from all timetables
+        for timetable in timetables:
+            lessons_data = LessonSerializer(timetable.lessons.all(), many=True).data
+            for lesson in lessons_data:
+                lesson["class_id"] = timetable.school_class.id
+            response_data["lessons"].extend(lessons_data)
+
+        # Add ALL time slots (sorted properly)
+        if timetables:
+            all_time_slots = TimeSlot.objects.filter(
+                school=timetables[0].school_class.school
+            ).order_by("day_order", "start_time", "order")
+
+            response_data["time_slots"] = TimeSlotSerializer(
+                all_time_slots, many=True
+            ).data
+
+            print(f"\nResponse includes {len(response_data['time_slots'])} time slots")
+            print(f"Response includes {len(response_data['lessons'])} lessons")
+
+        return Response(response_data, status=status.HTTP_201_CREATED)
+
+    def _generate_timetable(
+        self,
+        school_class,
+        academic_year,
+        term,
+        apply_constraints,
+        subject_assignments=None,
+    ):
+        """Generate timetable with proper subject assignment handling"""
+        from collections import defaultdict
+        import random
+
+        print(f"\n{'='*60}")
+        print(f"GENERATING TIMETABLE FOR {school_class.name}")
+        print(f"{'='*60}")
+
+        # Create timetable
         timetable = Timetable.objects.create(
             school_class=school_class,
             academic_year=academic_year,
@@ -217,233 +311,301 @@ class TimetableViewSet(viewsets.ModelViewSet):
             is_active=False,
         )
 
-        # Get the school's timetable structure
-        structure = TimetableStructure.objects.get(school=school_class.school)
-        time_slots = TimeSlot.objects.filter(school=school_class.school).order_by(
-            "day_of_week", "order"
-        )
-
-        # Get all subjects for the class
-        subjects = school_class.subjects.all()
-
-        # Get teachers for each subject
-        subject_teachers = {}
-        for subject in subjects:
-            teachers = Teacher.objects.filter(
-                subjects_taught=subject, assigned_classes=school_class
+        # Get structure and ALL time slots (non-break)
+        try:
+            structure = TimetableStructure.objects.get(school=school_class.school)
+            all_time_slots = list(
+                TimeSlot.objects.filter(
+                    school=school_class.school, is_break=False, is_active=True
+                ).order_by("day_order", "start_time", "order")
             )
-            if teachers.exists():
-                subject_teachers[subject.id] = list(teachers)
 
-        # Get active constraints if requested
-        constraints = {}
-        if apply_constraints:
-            for constraint in TimetableConstraint.objects.filter(
-                school=school_class.school, is_active=True
-            ):
-                constraints[constraint.constraint_type] = constraint
+            if not all_time_slots:
+                raise serializers.ValidationError("No time slots available")
 
-        # Track scheduled lessons for constraint checking
-        scheduled_lessons = []
+            print(f"Total available time slots: {len(all_time_slots)}")
 
-        # First pass - schedule all mandatory breaks
-        for time_slot in time_slots:
-            if time_slot.is_break:
-                scheduled_lessons.append(
-                    {
-                        "time_slot": time_slot,
-                        "is_break": True,
-                        "break_name": time_slot.break_name,
-                    }
+        except TimetableStructure.DoesNotExist:
+            raise serializers.ValidationError("Timetable structure not found")
+
+        # Build subject-teacher mapping from assignments
+        subject_teacher_map = {}
+        subject_periods_needed = {}
+
+        if subject_assignments and len(subject_assignments) > 0:
+            print(
+                f"\nUsing {len(subject_assignments)} subject assignments from request"
+            )
+
+            for assignment in subject_assignments:
+                subject_id = assignment.get("subject_id")
+                teacher_id = assignment.get("teacher_id")
+                periods = assignment.get("required_periods", 5)
+
+                if subject_id and teacher_id:
+                    try:
+                        subject = Subject.objects.get(id=subject_id)
+                        teacher = Teacher.objects.get(id=teacher_id)
+
+                        subject_teacher_map[subject_id] = teacher
+                        subject_periods_needed[subject_id] = periods
+
+                        print(
+                            f"  ✓ {subject.name}: {teacher.user.get_full_name()} ({periods} periods)"
+                        )
+                    except (Subject.DoesNotExist, Teacher.DoesNotExist) as e:
+                        print(f"  ✗ Invalid assignment: {e}")
+                        continue
+        else:
+            # Fallback: Use class subjects
+            print("\nNo subject assignments provided, using class subjects")
+            subjects = list(school_class.subjects.all())
+
+            if not subjects:
+                raise serializers.ValidationError(
+                    f"No subjects assigned to {school_class.name}"
                 )
 
-        # Second pass - schedule subjects
-        for time_slot in time_slots:
-            if time_slot.is_break:
-                continue  # Skip break slots
+            for subject in subjects:
+                teachers = list(
+                    Teacher.objects.filter(
+                        subjects_taught=subject, school=school_class.school
+                    )
+                )
 
-            # Get available subjects (those not yet fully scheduled)
-            available_subjects = [
-                subj
-                for subj in subjects
-                if subj.periods_per_week
-                > Lesson.objects.filter(timetable=timetable, subject=subj).count()
-            ]
+                if teachers:
+                    subject_teacher_map[subject.id] = random.choice(teachers)
+                    subject_periods_needed[subject.id] = (
+                        getattr(subject, "periods_per_week", 5) or 5
+                    )
+                    print(
+                        f"  ✓ {subject.name}: Auto-assigned teacher ({subject_periods_needed[subject.id]} periods)"
+                    )
 
-            if not available_subjects:
+        if not subject_teacher_map:
+            raise serializers.ValidationError("No valid subject-teacher assignments")
+
+        print(f"\nTotal subjects to schedule: {len(subject_teacher_map)}")
+        print(f"Total periods needed: {sum(subject_periods_needed.values())}")
+        print(f"Available slots: {len(all_time_slots)}")
+
+        # Group slots by day
+        slots_by_day = defaultdict(list)
+        for slot in all_time_slots:
+            slots_by_day[slot.day_of_week].append(slot)
+
+        days = ["MON", "TUE", "WED", "THU", "FRI"]
+
+        print(f"\nSlot distribution:")
+        for day in days:
+            print(f"  {day}: {len(slots_by_day[day])} slots")
+
+        # Get constraints
+        active_constraints = []
+        if apply_constraints:
+            active_constraints = list(
+                TimetableConstraint.objects.filter(
+                    school=school_class.school,
+                    is_active=True,
+                    constraint_type__in=["NO_TEACHER_CLASH", "NO_CLASS_CLASH"],
+                )
+            )
+            print(f"\nApplying {len(active_constraints)} constraints")
+
+        # Create subject pool with proper distribution
+        subject_pool = []
+        for subject_id, periods in subject_periods_needed.items():
+            for _ in range(periods):
+                subject_pool.append(subject_id)
+
+        random.shuffle(subject_pool)
+        print(f"\nSubject pool size: {len(subject_pool)} periods")
+
+        # Track usage
+        subject_periods_scheduled = defaultdict(int)
+        daily_subject_count = {day: defaultdict(int) for day in days}
+        teacher_slots = defaultdict(set)
+        scheduled_lessons = []
+
+        print(f"\n{'='*60}")
+        print("SCHEDULING LESSONS")
+        print(f"{'='*60}")
+
+        # Schedule lessons day by day
+        for day in days:
+            day_slots = slots_by_day[day]
+            if not day_slots:
                 continue
 
-            # Try to schedule each available subject until one fits
-            for subject in available_subjects:
-                # Get available teachers for this subject
-                available_teachers = subject_teachers.get(subject.id, [])
-                if not available_teachers:
+            print(f"\n{day} ({len(day_slots)} slots):")
+
+            for slot in day_slots:
+                if not subject_pool:
+                    print(f"  ⚠ Subject pool exhausted at {slot.start_time}")
+                    break
+
+                # Find best subject for this slot (least used today)
+                best_subject_id = None
+                best_subject_idx = None
+                min_usage = float("inf")
+
+                for idx, subj_id in enumerate(subject_pool):
+                    usage = daily_subject_count[day][subj_id]
+                    if usage < min_usage:
+                        min_usage = usage
+                        best_subject_id = subj_id
+                        best_subject_idx = idx
+
+                if best_subject_id is None:
                     continue
 
-                # Try each teacher until one fits
-                for teacher in available_teachers:
-                    # Check if this lesson would violate any constraints
-                    if not self._check_constraints(
-                        constraints,
-                        timetable,
-                        subject,
-                        teacher,
-                        time_slot,
-                        scheduled_lessons,
-                    ):
-                        continue  # Skip if constraints would be violated
+                # Remove from pool
+                subject_pool.pop(best_subject_idx)
 
-                    # Create the lesson
+                # Get subject and teacher
+                try:
+                    subject = Subject.objects.get(id=best_subject_id)
+                    teacher = subject_teacher_map[best_subject_id]
+                except Subject.DoesNotExist:
+                    print(f"  ✗ Subject {best_subject_id} not found")
+                    continue
+
+                # Check constraints
+                if active_constraints:
+                    # Teacher clash
+                    if slot.id in teacher_slots[teacher.id]:
+                        print(f"  ✗ {subject.name}: Teacher busy")
+                        continue
+
+                    # Slot already used
+                    if Lesson.objects.filter(
+                        timetable=timetable, time_slot=slot
+                    ).exists():
+                        print(f"  ✗ Slot already used at {slot.start_time}")
+                        continue
+
+                # Create lesson
+                try:
                     lesson = Lesson.objects.create(
                         timetable=timetable,
                         subject=subject,
                         teacher=teacher,
-                        time_slot=time_slot,
+                        time_slot=slot,
+                        is_double_period=False,
                     )
-                    scheduled_lessons.append(
-                        {
-                            "lesson": lesson,
-                            "time_slot": time_slot,
-                            "subject": subject,
-                            "teacher": teacher,
-                        }
+
+                    scheduled_lessons.append(lesson)
+                    subject_periods_scheduled[best_subject_id] += 1
+                    daily_subject_count[day][best_subject_id] += 1
+                    teacher_slots[teacher.id].add(slot.id)
+
+                    print(
+                        f"  ✓ {slot.start_time}: {subject.name} - {teacher.user.get_full_name()}"
                     )
-                    break  # Move to next time slot after successful scheduling
+
+                except Exception as e:
+                    print(f"  ✗ Error at {slot.start_time}: {e}")
+
+        # Summary
+        print(f"\n{'='*60}")
+        print("GENERATION SUMMARY")
+        print(f"{'='*60}")
+
+        for subject_id, needed in subject_periods_needed.items():
+            scheduled = subject_periods_scheduled[subject_id]
+            subject = Subject.objects.get(id=subject_id)
+            status = "✓" if scheduled >= needed else "✗"
+            print(f"{status} {subject.name}: {scheduled}/{needed} periods")
+
+        print(f"\nTotal lessons: {len(scheduled_lessons)}")
+        print(
+            f"Fill rate: {len(scheduled_lessons)}/{len(all_time_slots)} ({len(scheduled_lessons)/len(all_time_slots)*100:.1f}%)"
+        )
 
         return timetable
 
-    def _check_constraints(
-        self, constraints, timetable, subject, teacher, time_slot, scheduled_lessons
+    def _check_all_constraints(
+        self,
+        constraints,
+        timetable,
+        subject,
+        teacher,
+        time_slot,
+        scheduled_lessons,
+        structure,
     ):
-        """Check if a potential lesson would violate any constraints"""
-        school = timetable.school_class.school
-        # Retrieve the timetable structure for use in constraints
-        structure = TimetableStructure.objects.get(school=school)
+        """Check all active constraints for a potential lesson"""
 
-        # 1. Check teacher constraints
-        if "NO_TEACHER_CLASH" in constraints:
-            teacher_clash = Lesson.objects.filter(
-                timetable__school_class__school=school,
-                time_slot=time_slot,
-                teacher=teacher,
-            ).exists()
-            if teacher_clash:
-                return False
+        for constraint in constraints:
+            constraint_type = constraint.constraint_type
 
-        if "NO_TEACHER_SAME_SUBJECT_CLASH" in constraints:
-            same_subject_clash = Lesson.objects.filter(
-                timetable__school_class__school=school,
-                time_slot=time_slot,
-                teacher=teacher,
-                subject=subject,
-            ).exists()
-            if same_subject_clash:
-                return False
-
-        # 2. Check class constraints
-        if "NO_CLASS_CLASH" in constraints:
-            class_clash = Lesson.objects.filter(
-                timetable=timetable, time_slot=time_slot
-            ).exists()
-            if class_clash:
-                return False
-
-        # 3. Check subject constraints
-        if "NO_CORE_AFTER_LUNCH" in constraints and time_slot.is_after_lunch():
-            if subject.name in ["Mathematics", "English", "Kiswahili"]:
-                return False
-
-        if "NO_DOUBLE_CORE" in constraints:
-            if subject.name in ["Mathematics", "English", "Kiswahili"]:
-                # Check if previous slot was same core subject
-                prev_lesson = Lesson.objects.filter(
-                    timetable=timetable, time_slot__order=time_slot.order - 1
-                ).first()
-                if prev_lesson and prev_lesson.subject.name == subject.name:
+            if constraint_type == "NO_TEACHER_CLASH":
+                clash = Lesson.objects.filter(
+                    timetable__school_class__school=timetable.school_class.school,
+                    time_slot=time_slot,
+                    teacher=teacher,
+                ).exists()
+                if clash:
                     return False
 
-        if "MATH_NOT_AFTER_SCIENCE" in constraints and subject.name == "Mathematics":
-            prev_lesson = Lesson.objects.filter(
-                timetable=timetable, time_slot__order=time_slot.order - 1
-            ).first()
-            if prev_lesson and prev_lesson.subject.name in [
-                "Biology",
-                "Physics",
-                "Chemistry",
-                "Science",
-            ]:
-                return False
-
-        if "MATH_MORNING_ONLY" in constraints and subject.name == "Mathematics":
-            if not time_slot.is_morning():
-                return False
-
-        if "ENGLISH_KISWAHILI_SEPARATE" in constraints:
-            if subject.name in ["English", "Kiswahili"]:
-                prev_lesson = Lesson.objects.filter(
-                    timetable=timetable, time_slot__order=time_slot.order - 1
-                ).first()
-                if prev_lesson and prev_lesson.subject.name in ["English", "Kiswahili"]:
+            elif constraint_type == "NO_CLASS_CLASH":
+                clash = Lesson.objects.filter(
+                    timetable=timetable, time_slot=time_slot
+                ).exists()
+                if clash:
                     return False
 
-        # 4. Check subject grouping
-        if "SUBJECT_GROUPING" in constraints:
-            group_id = constraints["SUBJECT_GROUPING"].parameters.get("subject_group")
-            if group_id:
-                group = SubjectGroup.objects.filter(id=group_id).first()
-                if group and subject in group.subjects.all():
-                    # Check if any other subject from this group is already scheduled
-                    group_subjects = group.subjects.exclude(id=subject.id)
-                    group_lesson = Lesson.objects.filter(
-                        timetable=timetable, subject__in=group_subjects
-                    ).exists()
-                    if group_lesson:
+            elif constraint_type == "NO_CORE_AFTER_LUNCH":
+                if time_slot.is_after_lunch() and subject.name in [
+                    "Mathematics",
+                    "English",
+                    "Kiswahili",
+                ]:
+                    return False
+
+            elif constraint_type == "MATH_MORNING_ONLY":
+                if subject.name == "Mathematics" and not time_slot.is_morning():
+                    return False
+
+            elif constraint_type == "NO_DOUBLE_CORE":
+                if subject.name in ["Mathematics", "English", "Kiswahili"]:
+                    prev_lessons = Lesson.objects.filter(
+                        timetable=timetable,
+                        time_slot__order=time_slot.order - 1,
+                        time_slot__day_of_week=time_slot.day_of_week,
+                        subject=subject,
+                    )
+                    if prev_lessons.exists():
                         return False
 
-        # 5. Check science double period (for 8-4-4 only)
-        if "SCIENCE_DOUBLE_PERIOD" in constraints:
-            if structure.curriculum == "8-4-4" and subject.name in [
-                "Biology",
-                "Physics",
-                "Chemistry",
-            ]:
-                # Check if we need to schedule a double period
-                science_lessons = Lesson.objects.filter(
-                    timetable=timetable, subject=subject
-                ).count()
-                if science_lessons == 0:  # First science lesson of the week
-                    # Check if next time slot is available for double period
-                    next_slot = TimeSlot.objects.filter(
-                        school=school,
-                        day_of_week=time_slot.day_of_week,
-                        order=time_slot.order + 1,
-                        is_break=False,
-                    ).first()
-                    if (
-                        next_slot
-                        and not Lesson.objects.filter(
-                            timetable=timetable, time_slot=next_slot
-                        ).exists()
-                    ):
-                        # Schedule double period
-                        lesson = Lesson.objects.create(
-                            timetable=timetable,
-                            subject=subject,
-                            teacher=teacher,
-                            time_slot=next_slot,
-                            is_double_period=True,
-                        )
-                        scheduled_lessons.append(
-                            {
-                                "lesson": lesson,
-                                "time_slot": next_slot,
-                                "subject": subject,
-                                "teacher": teacher,
-                                "is_double_period": True,
-                            }
-                        )
+            elif constraint_type == "MATH_NOT_AFTER_SCIENCE":
+                if subject.name == "Mathematics":
+                    prev_lessons = Lesson.objects.filter(
+                        timetable=timetable,
+                        time_slot__order=time_slot.order - 1,
+                        time_slot__day_of_week=time_slot.day_of_week,
+                    )
+                    for prev_lesson in prev_lessons:
+                        if prev_lesson.subject.name in [
+                            "Biology",
+                            "Physics",
+                            "Chemistry",
+                            "Science",
+                        ]:
+                            return False
 
-        return True  # All constraints passed
+            elif constraint_type == "ENGLISH_KISWAHILI_SEPARATE":
+                if subject.name in ["English", "Kiswahili"]:
+                    prev_lessons = Lesson.objects.filter(
+                        timetable=timetable,
+                        time_slot__order=time_slot.order - 1,
+                        time_slot__day_of_week=time_slot.day_of_week,
+                    )
+                    for prev_lesson in prev_lessons:
+                        if prev_lesson.subject.name in ["English", "Kiswahili"]:
+                            return False
+
+        return True
 
     @action(detail=False, methods=["post"])
     def clone(self, request):
@@ -457,7 +619,6 @@ class TimetableViewSet(viewsets.ModelViewSet):
         target_year = data["target_academic_year"]
         target_term = data["target_term"]
 
-        # Get the source timetables
         source_timetables = Timetable.objects.filter(
             school_class__id__in=class_ids, academic_year=source_year, term=source_term
         )
@@ -468,7 +629,6 @@ class TimetableViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Check if target timetables already exist
         existing_targets = Timetable.objects.filter(
             school_class__id__in=class_ids, academic_year=target_year, term=target_term
         )
@@ -478,10 +638,8 @@ class TimetableViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Clone the timetables
         cloned_timetables = []
         for source in source_timetables:
-            # Create new timetable
             new_timetable = Timetable.objects.create(
                 school_class=source.school_class,
                 academic_year=target_year,
@@ -489,7 +647,6 @@ class TimetableViewSet(viewsets.ModelViewSet):
                 is_active=False,
             )
 
-            # Clone lessons
             for lesson in source.lessons.all():
                 Lesson.objects.create(
                     timetable=new_timetable,
@@ -505,7 +662,7 @@ class TimetableViewSet(viewsets.ModelViewSet):
 
         log_action(
             user=request.user,
-            action=f"Cloned {len(cloned_timetables)} timetables from {source_year} Term {source_term} to {target_year} Term {target_term}",
+            action=f"Cloned {len(cloned_timetables)} timetables",
             category=ActionCategory.CREATE,
             metadata={
                 "source_year": source_year,
@@ -527,7 +684,6 @@ class TimetableViewSet(viewsets.ModelViewSet):
         timetable = self.get_object()
         format = request.query_params.get("format", "csv")
 
-        # TODO: Implement export functionality
         return Response(
             {"status": "Export functionality coming soon"},
             status=status.HTTP_501_NOT_IMPLEMENTED,

@@ -10,20 +10,6 @@ from skul_data.school_timetables.views.school_timetable import (
     TeacherAvailabilityViewSet,
 )
 
-# router = DefaultRouter()
-# router.register(r"time-slots", TimeSlotViewSet)
-# router.register(r"timetable-structures", TimetableStructureViewSet)
-# router.register(r"timetables", TimetableViewSet)
-# router.register(r"lessons", LessonViewSet)
-# router.register(r"timetable-constraints", TimetableConstraintViewSet)
-# router.register(r"subject-groups", SubjectGroupViewSet)
-# router.register(r"teacher-availability", TeacherAvailabilityViewSet)
-
-# urlpatterns = [
-#     path("", include(router.urls)),
-# ]
-
-
 app_name = "school_timetables"  # This registers the namespace
 
 router = DefaultRouter()

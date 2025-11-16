@@ -25,6 +25,8 @@ from skul_data.users.permissions.permission import HasRolePermission
 from skul_data.users.models.base_user import User
 from skul_data.action_logs.utils.action_log import log_action
 from skul_data.action_logs.models.action_log import ActionCategory
+from skul_data.schools.models.school import School
+from rest_framework import serializers
 
 
 class TeacherViewSet(viewsets.ModelViewSet):
@@ -96,10 +98,6 @@ class TeacherViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         print(f"TeacherViewSet request params: {self.request.query_params}")
-        print(f"Authenticated user: {self.request.user}")
-        print(
-            f"User school admin profile: {getattr(self.request.user, 'school_admin_profile', None)}"
-        )
         queryset = super().get_queryset()
         user = self.request.user
 
@@ -109,9 +107,15 @@ class TeacherViewSet(viewsets.ModelViewSet):
 
         # First try to filter by explicit parameters
         if school_code:
-            return queryset.filter(school__code=school_code)
+            try:
+                return queryset.filter(school__code=school_code)
+            except (ValueError, School.DoesNotExist):
+                return queryset.none()
         if school_id:
-            return queryset.filter(school_id=school_id)
+            try:
+                return queryset.filter(school_id=school_id)
+            except (ValueError, School.DoesNotExist):
+                return queryset.none()
 
         # For school admins, auto-filter to their school
         if user.user_type == User.SCHOOL_ADMIN:
@@ -121,11 +125,36 @@ class TeacherViewSet(viewsets.ModelViewSet):
             ):
                 return queryset.filter(school=user.school_admin_profile.school)
 
+        # For administrators, filter to their school
+        if user.user_type == User.ADMINISTRATOR:
+            if (
+                hasattr(user, "administrator_profile")
+                and user.administrator_profile.school
+            ):
+                return queryset.filter(school=user.administrator_profile.school)
+
         # For other authenticated users, return none unless they have permissions
         return queryset.none()
 
     def perform_create(self, serializer):
-        school = self.request.user.school
+        # Get school from user or request data
+        school = None
+        if hasattr(self.request.user, "school_admin_profile"):
+            school = self.request.user.school_admin_profile.school
+        elif hasattr(self.request.user, "administrator_profile"):
+            school = self.request.user.administrator_profile.school
+
+        # If school is provided in request data, use that
+        school_id = self.request.data.get("school")
+        if school_id and not school:
+            try:
+                school = School.objects.get(id=school_id)
+            except School.DoesNotExist:
+                pass
+
+        if not school:
+            raise serializers.ValidationError("School is required")
+
         serializer.save(school=school)
 
     @action(detail=True, methods=["post"])

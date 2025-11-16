@@ -37,6 +37,7 @@ from skul_data.action_logs.models.action_log import ActionCategory
 from skul_data.action_logs.utils.action_log import log_action
 from rest_framework.permissions import OR
 from django.db import models
+from skul_data.schools.models.school import School
 
 
 class StudentFilter(filters.FilterSet):
@@ -879,21 +880,54 @@ class SubjectViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
-        school_code = self.request.query_params.get(
-            "school_id"
-        )  # Frontend sends school_id
+        school_id = self.request.query_params.get("school")
+        school_code = self.request.query_params.get("school_code")
 
-        if school_code:
+        # Try to get school by ID first, then by code
+        if school_id:
             try:
-                # Filter by school code instead of ID
+                return queryset.filter(school_id=school_id)
+            except (ValueError, School.DoesNotExist):
+                return queryset.none()
+        elif school_code:
+            try:
                 return queryset.filter(school__code=school_code)
             except School.DoesNotExist:
                 return queryset.none()
 
+        # If user is authenticated and has a school, filter by their school
+        user = self.request.user
+        if user.is_authenticated:
+            if (
+                hasattr(user, "school_admin_profile")
+                and user.school_admin_profile.school
+            ):
+                return queryset.filter(school=user.school_admin_profile.school)
+            elif (
+                hasattr(user, "administrator_profile")
+                and user.administrator_profile.school
+            ):
+                return queryset.filter(school=user.administrator_profile.school)
+
         return queryset.none()
 
     def perform_create(self, serializer):
-        instance = serializer.save(school=self.request.user.school)
+        # Get school from user or request data
+        school = None
+        if hasattr(self.request.user, "school_admin_profile"):
+            school = self.request.user.school_admin_profile.school
+        elif hasattr(self.request.user, "administrator_profile"):
+            school = self.request.user.administrator_profile.school
+
+        # If school is provided in request data, use that
+        school_id = self.request.data.get("school")
+        if school_id and not school:
+            try:
+                school = School.objects.get(id=school_id)
+            except School.DoesNotExist:
+                pass
+
+        instance = serializer.save(school=school)
         log_action(
             self.request.user,
             f"Created new subject {instance.name}",

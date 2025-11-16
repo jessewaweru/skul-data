@@ -64,28 +64,13 @@ class TimetableStructureSerializer(serializers.ModelSerializer):
         return instance
 
 
-class TimetableSerializer(serializers.ModelSerializer):
-    school_class_details = SchoolClassSerializer(source="school_class", read_only=True)
-
-    class Meta:
-        model = Timetable
-        fields = [
-            "id",
-            "school_class",
-            "school_class_details",
-            "academic_year",
-            "term",
-            "is_active",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = ["created_at", "updated_at"]
-
-
 class LessonSerializer(serializers.ModelSerializer):
     subject_details = SubjectSerializer(source="subject", read_only=True)
     teacher_details = TeacherSerializer(source="teacher", read_only=True)
     time_slot_details = TimeSlotSerializer(source="time_slot", read_only=True)
+    day_of_week = serializers.CharField(source="time_slot.day_of_week", read_only=True)
+    start_time = serializers.TimeField(source="time_slot.start_time", read_only=True)
+    end_time = serializers.TimeField(source="time_slot.end_time", read_only=True)
 
     class Meta:
         model = Lesson
@@ -98,10 +83,42 @@ class LessonSerializer(serializers.ModelSerializer):
             "teacher_details",
             "time_slot",
             "time_slot_details",
+            "day_of_week",
+            "start_time",
+            "end_time",
             "is_double_period",
             "room",
             "notes",
         ]
+
+
+# In TimetableSerializer, add lessons details
+class TimetableSerializer(serializers.ModelSerializer):
+    school_class_details = SchoolClassSerializer(source="school_class", read_only=True)
+    lessons_count = serializers.SerializerMethodField()
+    lessons = LessonSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Timetable
+        fields = [
+            "id",
+            "school_class",
+            "school_class_details",
+            "academic_year",
+            "term",
+            "is_active",
+            "lessons_count",
+            "lessons",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["created_at", "updated_at"]
+
+    def get_lessons_count(self, obj):
+        return obj.lessons.count()
+
+
+# Fix the LessonSerializer to include proper relationships
 
 
 class TimetableConstraintSerializer(serializers.ModelSerializer):
@@ -207,9 +224,36 @@ class TimetableGenerateSerializer(serializers.Serializer):
     regenerate_existing = serializers.BooleanField(default=False)
     apply_constraints = serializers.BooleanField(default=True)
 
+    # ADDED: Subject assignments field
+    subject_assignments = serializers.ListField(
+        child=serializers.DictField(),
+        required=False,
+        allow_empty=True,
+        help_text="List of subject assignments with subject_id, teacher_id, and required_periods",
+    )
+
     def validate_school_class_ids(self, value):
         if not value:
             raise serializers.ValidationError("At least one class ID must be provided")
+        return value
+
+    def validate_subject_assignments(self, value):
+        """Validate subject assignments structure"""
+        if not value:
+            return value
+
+        for idx, assignment in enumerate(value):
+            if "subject_id" not in assignment:
+                raise serializers.ValidationError(
+                    f"Assignment {idx}: missing subject_id"
+                )
+            if "teacher_id" not in assignment:
+                raise serializers.ValidationError(
+                    f"Assignment {idx}: missing teacher_id"
+                )
+            if "required_periods" not in assignment:
+                assignment["required_periods"] = 5  # Default
+
         return value
 
 

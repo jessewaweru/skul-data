@@ -304,6 +304,9 @@ class Subject(models.Model):
     name = models.CharField(max_length=100, unique=True)
     code = models.CharField(max_length=10, unique=True, help_text="E.g., MATH101")
     description = models.TextField(blank=True, null=True)
+    periods_per_week = models.PositiveIntegerField(
+        default=5, help_text="Number of periods per week"
+    )
     school = models.ForeignKey(
         "schools.School",
         on_delete=models.CASCADE,
