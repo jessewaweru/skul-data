@@ -5,6 +5,7 @@ env/
 # Environment variables
 .env
 *.env
+.env.example
 
 # Python bytecode
 __pycache__/
