@@ -75,27 +75,6 @@ class TeacherViewSet(viewsets.ModelViewSet):
     required_permission_patch = "update_teacher"  # Used for partial_update action
     required_permission_delete = "manage_teachers"  # Used for delete action
 
-    # def get_queryset(self):
-    #     queryset = super().get_queryset()
-    #     user = self.request.user
-
-    #     if user.user_type == User.SCHOOL_ADMIN:
-    #         return queryset
-
-    #     school = getattr(user, "school", None)
-    #     if not school:
-    #         return Teacher.objects.none()
-
-    #     queryset = queryset.filter(school=school)
-
-    #     # Teachers can only see their own profile
-    #     if user.user_type == "teacher":
-    #         return queryset.filter(user=user)
-
-    #     return queryset.select_related("user", "school").prefetch_related(
-    #         "subjects_taught", "assigned_classes"
-    #     )
-
     def get_queryset(self):
         print(f"TeacherViewSet request params: {self.request.query_params}")
         queryset = super().get_queryset()
@@ -404,19 +383,6 @@ class TeacherAttendanceViewSet(viewsets.ModelViewSet):
     filterset_fields = ["teacher", "date", "status"]
     permission_classes = [IsAdministrator]
 
-    # def get_queryset(self):
-    #     queryset = super().get_queryset()
-    #     user = self.request.user
-
-    #     if user.user_type == User.SCHOOL_ADMIN:
-    #         return queryset
-
-    #     school = getattr(user, "school", None)
-    #     if not school:
-    #         return TeacherAttendance.objects.none()
-
-    #     return queryset.filter(teacher__school=school)
-
     def get_queryset(self):
         user = self.request.user
         school = user.school
@@ -426,65 +392,6 @@ class TeacherAttendanceViewSet(viewsets.ModelViewSet):
 
         # Always filter by school
         return Teacher.objects.filter(school=school)
-
-
-# class TeacherDocumentViewSet(viewsets.ModelViewSet):
-#     queryset = TeacherDocument.objects.all()
-#     serializer_class = TeacherDocumentSerializer
-#     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-#     filterset_fields = ["teacher", "document_type", "is_confidential"]
-#     search_fields = ["title", "description"]
-
-#     def get_permissions(self):
-#         if self.action in ["create", "update", "destroy"]:
-#             return [IsAdministrator()]
-#         return [IsAuthenticated()]
-
-#     def get_queryset(self):
-#         queryset = super().get_queryset()
-#         user = self.request.user
-
-#         if user.user_type == User.SCHOOL_ADMIN:
-#             return queryset
-
-#         school = getattr(user, "school", None)
-#         if not school:
-#             return TeacherDocument.objects.none()
-
-#         queryset = queryset.filter(teacher__school=school)
-
-#         if user.user_type == "teacher":
-#             return queryset.filter(Q(teacher__user=user) | Q(is_confidential=False))
-
-#         return queryset
-
-#     def perform_create(self, serializer):
-#         serializer.save(uploaded_by=self.request.user)
-
-#     def destroy(self, request, *args, **kwargs):
-#         instance = self.get_object()
-
-#         # Log before deletion
-#         log_action(
-#             user=request.user,
-#             action=f"Deleted teacher document: {instance.title}",
-#             category=ActionCategory.DELETE,
-#             obj=instance,
-#             metadata={
-#                 "document_type": instance.document_type,
-#                 "teacher_id": instance.teacher.id,
-#                 "was_confidential": instance.is_confidential,
-#             },
-#         )
-
-#         try:
-#             self.perform_destroy(instance)
-#             return Response(status=status.HTTP_204_NO_CONTENT)
-#         except Exception as e:
-#             # Ensure log exists even if deletion fails
-#             return Response(
-#                 {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
-#             )
 
 
 class TeacherDocumentViewSet(viewsets.ModelViewSet):

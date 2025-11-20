@@ -8,6 +8,8 @@ from skul_data.action_logs.models.action_log import ActionLog
 from skul_data.action_logs.serializers.action_log import ActionLogSerializer
 from skul_data.users.permissions.permission import IsAdministrator, IsSchoolAdmin
 from skul_data.action_logs.models.action_log import ActionCategory
+from django.db.models import Q
+from skul_data.users.models import User
 
 
 class ActionLogViewSet(viewsets.ReadOnlyModelViewSet):
@@ -18,7 +20,6 @@ class ActionLogViewSet(viewsets.ReadOnlyModelViewSet):
 
     queryset = ActionLog.objects.all().order_by("-timestamp")
     serializer_class = ActionLogSerializer
-    # permission_classes = [permissions.IsAuthenticated, IsAdministrator]
     permission_classes = [permissions.IsAuthenticated, IsSchoolAdmin]
     filter_backends = [
         DjangoFilterBackend,
@@ -44,19 +45,91 @@ class ActionLogViewSet(viewsets.ReadOnlyModelViewSet):
     ordering_fields = ["timestamp", "user_tag"]
     ordering = ["-timestamp"]
 
-    @action(detail=False, methods=["get"])
+    def get_queryset(self):
+        """Filter logs by school if user is school admin"""
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        try:
+            # Filter by school if user has a school association
+            if hasattr(user, "school_admin_profile") and user.school_admin_profile:
+                school = user.school_admin_profile.school
+
+                if school:
+                    # Get all users in this school
+                    school_user_tags = []
+
+                    # School admin users
+                    admin_tags = User.objects.filter(
+                        school_admin_profile__school=school
+                    ).values_list("user_tag", flat=True)
+                    school_user_tags.extend(list(admin_tags))
+
+                    # Teacher users
+                    teacher_tags = User.objects.filter(
+                        teacher_profile__school=school
+                    ).values_list("user_tag", flat=True)
+                    school_user_tags.extend(list(teacher_tags))
+
+                    # Parent users
+                    parent_tags = User.objects.filter(
+                        parent_profile__school=school
+                    ).values_list("user_tag", flat=True)
+                    school_user_tags.extend(list(parent_tags))
+
+                    # Filter queryset
+                    if school_user_tags:
+                        queryset = queryset.filter(user_tag__in=school_user_tags)
+        except Exception as e:
+            # Log the error but return all logs for the user
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error filtering action logs by school: {str(e)}")
+
+        return queryset
+
+    @action(detail=False, methods=["get"], url_path="model_options")
     def model_options(self, request):
         """Get available model options for filtering"""
-        content_types = ContentType.objects.filter(
-            id__in=ActionLog.objects.values("content_type").distinct()
-        )
-        options = [{"value": ct.model, "label": ct.name} for ct in content_types]
-        return Response(options)
+        try:
+            queryset = self.get_queryset()
 
-    @action(detail=False, methods=["get"])
+            # Get distinct content_type IDs from the filtered queryset
+            content_type_ids = queryset.values_list(
+                "content_type", flat=True
+            ).distinct()
+
+            # Remove None values
+            content_type_ids = [
+                ct_id for ct_id in content_type_ids if ct_id is not None
+            ]
+
+            if not content_type_ids:
+                return Response([])
+
+            # Get ContentType objects
+            content_types = ContentType.objects.filter(id__in=content_type_ids)
+
+            options = [{"value": ct.model, "label": ct.name} for ct in content_types]
+
+            return Response(options)
+        except Exception as e:
+            import logging
+
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error getting model options: {str(e)}")
+            return Response([])
+
+    @action(detail=False, methods=["get"], url_path="category_options")
     def category_options(self, request):
         """Get available category options"""
-        return Response(ActionCategory.choices)
+        return Response(
+            [
+                {"value": choice[0], "label": choice[1]}
+                for choice in ActionCategory.choices
+            ]
+        )
 
 
 # class ActionLogViewSet(viewsets.ReadOnlyModelViewSet):

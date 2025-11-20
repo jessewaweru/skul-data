@@ -15,6 +15,7 @@ class ActionLogMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        print(f"ActionLog Middleware: {request.method} {request.path}")
         response = self.get_response(request)
 
         # Skip logging if:
