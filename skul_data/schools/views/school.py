@@ -15,6 +15,8 @@ from skul_data.schools.serializers.school import (
 from skul_data.users.permissions.permission import IsPrimaryAdmin, IsSchoolAdmin
 from skul_data.users.models.teacher import Teacher
 from skul_data.users.serializers.teacher import TeacherSerializer
+from skul_data.users.models.parent import Parent
+from skul_data.users.serializers.parent import ParentSerializer
 
 
 class SchoolViewSet(viewsets.ModelViewSet):
@@ -89,15 +91,18 @@ def school_teachers(request, school_id):
     )
 
 
-# @api_view(["GET"])
-# # @permission_classes([AllowAny])
-# @permission_classes([IsAuthenticated, IsSchoolAdmin])
-# def school_teachers(request, school_id):
-#     # Verify user belongs to requested school
-#     if request.user.school.id != school_id:
-#         return Response({"error": "Permission denied"}, status=403)
-#     teachers = Teacher.objects.filter(school_id=school_id).select_related("user")
-#     serializer = TeacherSerializer(teachers, many=True)
-#     return Response(
-#         {"school_id": school_id, "count": teachers.count(), "teachers": serializer.data}
-#     )
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def school_parents(request, school_id):
+    """Get all parents for a specific school"""
+    parents = (
+        Parent.objects.filter(school_id=school_id)
+        .select_related("user")
+        .prefetch_related("children")
+    )
+
+    serializer = ParentSerializer(parents, many=True)
+
+    return Response(
+        {"school_id": school_id, "count": parents.count(), "parents": serializer.data}
+    )

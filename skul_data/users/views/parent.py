@@ -55,11 +55,11 @@ class ParentViewSet(viewsets.ModelViewSet):
         "children__first_name",
         "children__last_name",
     ]
-    required_permission = "manage_parents"
+
     permission_classes = [IsAuthenticated, HasRolePermission]
 
-    # Specify different permissions for different actions
-    required_permission = "view_parents"  # Default permission for read operations
+    # Define permissions for each action
+    required_permission = "view_parents"
     required_permission_post = "create_parent"
     required_permission_put = "update_parent"
     required_permission_patch = "update_parent"
@@ -82,25 +82,6 @@ class ParentViewSet(viewsets.ModelViewSet):
     #     elif self.action in ["change_status", "assign_children"]:
     #         return [IsAdministrator()]
     #     return [IsAuthenticated()]
-
-    # def get_queryset(self):
-    #     queryset = super().get_queryset()
-    #     user = self.request.user
-
-    #     if user.user_type == User.SCHOOL_ADMIN:
-    #         return queryset
-
-    #     school = getattr(user, "school", None)
-    #     if not school:
-    #         return Parent.objects.none()
-
-    #     queryset = queryset.filter(school=school)
-
-    #     # Parents can only see their own profile
-    #     if user.user_type == "parent":
-    #         return queryset.filter(user=user)
-
-    #     return queryset.select_related("user", "school").prefetch_related("children")
 
     def get_queryset(self):
         queryset = super().get_queryset()

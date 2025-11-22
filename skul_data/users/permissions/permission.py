@@ -147,27 +147,23 @@ class HasRolePermission(BasePermission):
         user = request.user
 
         if not user.is_authenticated:
+            print("❌ Not authenticated")
             return False
-
-        # # 1. School owners (primary admins) have all permissions
-        # if (
-        #     user.user_type == User.SCHOOL_ADMIN
-        #     and hasattr(user, "school_admin_profile")
-        #     and user.school_admin_profile.is_primary
-        # ):
-        #     return True
 
         # 1. School owners (primary admins) have all permissions
         if user.user_type == User.SCHOOL_ADMIN and hasattr(
             user, "school_admin_profile"
         ):
-            return True  # School admins get full access
+            print("✅ School admin - granting full access")
+            return True  # School admins get full access - EARLY RETURN!
 
+        # 2. Get required permission for other users
         required_permission = self._get_required_permission(view, request.method)
         if not required_permission:
+            print("❌ No required permission defined for this view/method")
             return False
 
-        # 2. Administrator permissions (both standalone and teacher-administrators)
+        # 3. Administrator permissions (both standalone and teacher-administrators)
         if user.user_type == User.ADMINISTRATOR or (
             user.user_type == User.TEACHER
             and hasattr(user, "teacher_profile")
@@ -178,34 +174,45 @@ class HasRolePermission(BasePermission):
                 if required_permission in getattr(
                     user.administrator_profile, "permissions_granted", []
                 ):
+                    print("✅ Administrator with explicit permission")
                     return True
 
             # Then check role permissions
             if hasattr(user, "role") and user.role:
                 if user.role.permissions.filter(code=required_permission).exists():
+                    print("✅ Administrator with role permission")
                     return True
 
-        # 3. Special cases (keep your existing special handling)
+        # 4. Special cases (keep your existing special handling)
         if (
             hasattr(view, "action")
             and view.action == "mark_attendance"
             and user.user_type == User.TEACHER
         ):
+            print("✅ Teacher marking attendance")
             return True
 
         if request.method == "GET":
             view_action = getattr(view, "action", None)
             if view_action == "retrieve":
                 if user.user_type in [User.PARENT, User.TEACHER]:
+                    print("✅ Parent/Teacher viewing details")
                     return True
             elif view_action == "list":
                 if user.user_type in [User.PARENT, User.TEACHER]:
+                    print("✅ Parent/Teacher listing")
                     return True
 
-        # 4. Standard role permission check (for non-administrators)
+        # 5. Standard role permission check (for non-administrators)
         if hasattr(user, "role") and user.role:
-            return user.role.permissions.filter(code=required_permission).exists()
+            has_perm = user.role.permissions.filter(code=required_permission).exists()
+            if has_perm:
+                print("✅ Has role permission")
+            else:
+                print("❌ Missing role permission")
+            return has_perm
 
+        print("❌ No matching permission found")
         return False
 
     def _get_required_permission(self, view, method):
@@ -297,6 +304,11 @@ VIEW_OWN_REPORTS = "view_own_reports"
 # --- Parent Permissions ---
 VIEW_OWN_CHILDREN = "view_own_children"
 VIEW_CHILD_CLASS_PERFORMANCE = "view_child_class_performance"
+VIEW_PARENTS = "view_parents"
+CREATE_PARENT = "create_parent"
+UPDATE_PARENT = "update_parent"
+MANAGE_PARENTS = "manage_parents"
+VIEW_OWN_PARENTS = "view_own_parents"  # Already exists
 
 # --- Class Management Permissions ---
 MANAGE_CLASSES = "manage_classes"
@@ -345,6 +357,15 @@ SCHOOL_ADMIN_PERMISSIONS = [
     ("manage_academics", "Manage academic structure"),
     ("view_reports", "View all school reports"),
 ]
+
+DEFAULT_PARENT_PERMISSIONS = [
+    (VIEW_PARENTS, "Can view all parents"),
+    (CREATE_PARENT, "Can create parent accounts"),
+    (UPDATE_PARENT, "Can update parent information"),
+    (MANAGE_PARENTS, "Can fully manage parent accounts"),
+    (VIEW_OWN_PARENTS, "Can view own parent connections (for teachers)"),
+]
+
 # Additional permissions for timetables
 VIEW_TIMETABLES = "view_timetables"
 MANAGE_TIMETABLES = "manage_timetables"
