@@ -26,6 +26,10 @@ class School(models.Model):
     website = models.URLField(blank=True)
     logo = models.ImageField(upload_to="school_logos/", null=True, blank=True)
     timezone = models.CharField(max_length=50, default="Africa/Nairobi")
+    po_box = models.CharField(
+        max_length=100, null=True, blank=True, help_text="P.O. Box address"
+    )
+    website = models.URLField(null=True, blank=True, help_text="School website URL")
 
     # Academic Structure
     academic_year_structure = models.CharField(

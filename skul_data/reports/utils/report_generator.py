@@ -15,6 +15,7 @@ from skul_data.reports.models.report import (
     ReportNotification,
     GeneratedReportAccess,
 )
+from django.db.models import Avg
 from rest_framework.exceptions import PermissionDenied
 from skul_data.users.models.base_user import User
 from skul_data.schools.models.schoolclass import SchoolClass
@@ -22,8 +23,8 @@ from skul_data.reports.models.academic_record import AcademicRecord, TeacherComm
 from django.conf import settings
 from skul_data.action_logs.utils.action_log import log_action_async, log_action
 from skul_data.action_logs.models.action_log import ActionCategory
-
-
+from skul_data.students.models.student import Student
+from datetime import datetime, timedelta
 import logging
 import traceback
 
@@ -39,12 +40,8 @@ class ReportGenerator:
         """
         # Render HTML template with data
         context = {
-            "data": data,
-            "title": title,
-            "school": school,
-            "generated_on": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "generated_by": user.get_full_name() or user.username,
-            "logo_url": school.logo.url if school.logo else None,
+            **data,  # Spread all data
+            "generated_date": datetime.now().strftime("%d/%m/%Y"),
         }
 
         html_string = render_to_string(
@@ -52,7 +49,7 @@ class ReportGenerator:
         )
 
         # Convert to PDF
-        html = HTML(string=html_string)
+        html = HTML(string=html_string, base_url=settings.MEDIA_ROOT)
         pdf_bytes = html.write_pdf()
 
         # Create report instance
@@ -61,7 +58,7 @@ class ReportGenerator:
             report_type=template,
             school=school,
             generated_by=user,
-            data=json.dumps(data),
+            data=json.dumps(data, default=str),
             parameters={},
             file_format="PDF",
         )
@@ -192,63 +189,333 @@ class ReportGenerator:
                 access_grant.save()
 
 
+def get_previous_term(current_term):
+    """Get the previous term name"""
+    terms = ["Term 1", "Term 2", "Term 3"]
+    try:
+        idx = terms.index(current_term)
+        if idx > 0:
+            return terms[idx - 1]
+    except ValueError:
+        pass
+    return None
+
+
+def get_term_start_date(term, school_year):
+    """Get start date for a term"""
+    year = int(school_year.split("-")[0]) if "-" in school_year else int(school_year)
+
+    if term == "Term 1":
+        return datetime(year, 1, 10).date()
+    elif term == "Term 2":
+        return datetime(year, 5, 10).date()
+    else:  # Term 3
+        return datetime(year, 9, 10).date()
+
+
+def get_term_end_date(term, school_year):
+    """Get end date for a term"""
+    year = int(school_year.split("-")[0]) if "-" in school_year else int(school_year)
+
+    if term == "Term 1":
+        return datetime(year, 4, 5).date()
+    elif term == "Term 2":
+        return datetime(year, 8, 5).date()
+    else:  # Term 3
+        return datetime(year, 12, 15).date()
+
+
+def get_next_term_start_date(term, school_year):
+    """Get start date for next term"""
+    year = int(school_year.split("-")[0]) if "-" in school_year else int(school_year)
+
+    if term == "Term 1":
+        return datetime(year, 5, 10).date()
+    elif term == "Term 2":
+        return datetime(year, 9, 10).date()
+    else:  # Term 3
+        return datetime(year + 1, 1, 10).date()
+
+
 def generate_report_for_student(
     student, term, school_year, template, teacher_user, school, class_average
 ):
-    """Generate a report for a single student"""
+    """Generate a comprehensive academic report for a single student"""
     try:
         # Get academic records with related data
-        academic_records = AcademicRecord.objects.filter(
-            student=student, term=term, school_year=school_year, is_published=True
-        ).select_related("teacher", "subject")
+        academic_records = (
+            AcademicRecord.objects.filter(
+                student=student, term=term, school_year=school_year, is_published=True
+            )
+            .select_related("teacher", "subject")
+            .order_by("subject__name")
+        )
 
         if not academic_records.exists():
+            logger.warning(
+                f"No published academic records found for student {student.id}"
+            )
             return None
+
+        # Calculate statistics
+        total_marks = sum(float(record.score) for record in academic_records)
+        max_marks = len(academic_records) * 100
+        mean_mark = round(total_marks / len(academic_records), 2)
+
+        # Calculate total points (A=12, A-=11, B+=10, etc.)
+        grade_points = {
+            "A": 12,
+            "A-": 11,
+            "B+": 10,
+            "B": 9,
+            "B-": 8,
+            "C+": 7,
+            "C": 6,
+            "C-": 5,
+            "D+": 4,
+            "D": 3,
+            "D-": 2,
+            "E": 1,
+            "F": 0,
+        }
+        total_points = sum(
+            grade_points.get(record.grade, 0) for record in academic_records
+        )
+        max_points = len(academic_records) * 12
+
+        # Calculate overall grade based on mean
+        if mean_mark >= 80:
+            overall_grade = "A"
+        elif mean_mark >= 75:
+            overall_grade = "A-"
+        elif mean_mark >= 70:
+            overall_grade = "B+"
+        elif mean_mark >= 65:
+            overall_grade = "B"
+        elif mean_mark >= 60:
+            overall_grade = "B-"
+        elif mean_mark >= 55:
+            overall_grade = "C+"
+        elif mean_mark >= 50:
+            overall_grade = "C"
+        elif mean_mark >= 45:
+            overall_grade = "C-"
+        elif mean_mark >= 40:
+            overall_grade = "D+"
+        elif mean_mark >= 35:
+            overall_grade = "D"
+        elif mean_mark >= 30:
+            overall_grade = "D-"
+        else:
+            overall_grade = "E"
 
         # Get teacher comments
         comments = TeacherComment.objects.filter(
             student=student, term=term, school_year=school_year, is_approved=True
+        ).select_related("teacher__user")
+
+        class_teacher_comment = ""
+        head_comment = ""
+        for comment in comments:
+            if comment.comment_type == "GENERAL":
+                class_teacher_comment = comment.content
+            elif comment.comment_type == "RECOMMENDATION":
+                head_comment = comment.content
+
+        # Calculate rankings
+        class_students = (
+            student.student_class.students.all() if student.student_class else []
         )
+
+        # Calculate stream position
+        stream_rankings = []
+        for s in class_students:
+            s_records = AcademicRecord.objects.filter(
+                student=s, term=term, school_year=school_year
+            )
+            if s_records.exists():
+                s_mean = sum(float(r.score) for r in s_records) / len(s_records)
+                stream_rankings.append((s.id, s_mean))
+
+        stream_rankings.sort(key=lambda x: x[1], reverse=True)
+        stream_position = next(
+            (i + 1 for i, (sid, _) in enumerate(stream_rankings) if sid == student.id),
+            0,
+        )
+        stream_total = len(stream_rankings)
+
+        # Overall position (across all students in the year)
+        all_students = Student.objects.filter(
+            school=school, student_class__isnull=False
+        )
+        overall_rankings = []
+        for s in all_students:
+            s_records = AcademicRecord.objects.filter(
+                student=s, term=term, school_year=school_year
+            )
+            if s_records.exists():
+                s_mean = sum(float(r.score) for r in s_records) / len(s_records)
+                overall_rankings.append((s.id, s_mean))
+
+        overall_rankings.sort(key=lambda x: x[1], reverse=True)
+        overall_position = next(
+            (i + 1 for i, (sid, _) in enumerate(overall_rankings) if sid == student.id),
+            0,
+        )
+        overall_total = len(overall_rankings)
+
+        # Prepare records data with rankings, deviations, and trends
+        records_data = []
+        for record in academic_records:
+            # Calculate subject-specific rankings
+            subject_records = AcademicRecord.objects.filter(
+                subject=record.subject,
+                term=term,
+                school_year=school_year,
+                student__student_class=student.student_class,
+            ).order_by("-score")
+
+            subject_rank = (
+                list(subject_records.values_list("student_id", flat=True)).index(
+                    student.id
+                )
+                + 1
+            )
+            subject_total = subject_records.count()
+
+            # Calculate deviation and class average for this subject
+            subject_class_avg = (
+                subject_records.aggregate(Avg("score"))["score__avg"] or 0
+            )
+            deviation = round(float(record.score) - float(subject_class_avg), 1)
+
+            # Calculate trend (compare to previous term if available)
+            trend = "stable"
+            previous_term = get_previous_term(term)
+            if previous_term:
+                try:
+                    prev_record = AcademicRecord.objects.get(
+                        student=student,
+                        subject=record.subject,
+                        term=previous_term,
+                        school_year=school_year,
+                    )
+                    if float(record.score) > float(prev_record.score) + 5:
+                        trend = "up"
+                    elif float(record.score) < float(prev_record.score) - 5:
+                        trend = "down"
+                except AcademicRecord.DoesNotExist:
+                    trend = "stable"
+
+            records_data.append(
+                {
+                    "subject": record.subject.name,
+                    "entry_exam": None,  # Add if you have this data
+                    "mid_term": None,  # Add if you have this data
+                    "end_term": int(record.score),
+                    "score": int(record.score),
+                    "grade": record.grade,
+                    "deviation": deviation,
+                    "rank": subject_rank,
+                    "total_students": subject_total,
+                    "comments": record.subject_comments or "Good progress",
+                    "teacher": (
+                        record.teacher.user.get_full_name() if record.teacher else "N/A"
+                    ),
+                    "class_avg": round(float(subject_class_avg), 1),
+                    "trend": trend,
+                }
+            )
+
+        # Get term dates
+        term_end_date = get_term_end_date(term, school_year)
+        next_term_start = get_next_term_start_date(term, school_year)
+
+        # Get class teacher info
+        class_teacher_name = ""
+        class_teacher_signature = None
+        if student.student_class and student.student_class.class_teacher:
+            ct = student.student_class.class_teacher
+            class_teacher_name = ct.user.get_full_name()
+            if hasattr(ct, "signature") and ct.signature:
+                class_teacher_signature = ct.signature.url
+
+        # Get head of institution info
+        head_name = ""
+        head_signature = None
+        # Try to get primary admin first
+        if hasattr(school, "primary_admin") and school.primary_admin:
+            head_name = (
+                school.primary_admin.name
+                if hasattr(school.primary_admin, "name")
+                else f"{school.primary_admin.first_name} {school.primary_admin.last_name}"
+            )
+            # Check for signature in different possible locations
+            if hasattr(school.primary_admin, "schooladmin") and hasattr(
+                school.primary_admin.schooladmin, "signature"
+            ):
+                if school.primary_admin.schooladmin.signature:
+                    head_signature = school.primary_admin.schooladmin.signature.url
+            elif hasattr(school.primary_admin, "administratorprofile") and hasattr(
+                school.primary_admin.administratorprofile, "signature"
+            ):
+                if school.primary_admin.administratorprofile.signature:
+                    head_signature = (
+                        school.primary_admin.administratorprofile.signature.url
+                    )
 
         # Prepare report data
         report_data = {
-            # "student": {
-            #     "full_name": student.full_name,
-            #     "admission_number": student.admission_number,
-            #     "class_name": student.student_class.name,
-            # },
+            "school": {
+                "name": school.name,
+                "address": getattr(school, "address", ""),
+                "po_box": getattr(school, "po_box", ""),
+                "phone": getattr(school, "phone", "N/A"),
+                "email": getattr(school, "email", "N/A"),
+                "website": getattr(school, "website", ""),
+                "logo": school.logo.url if school.logo else None,
+            },
             "student": {
                 "full_name": student.full_name,
                 "admission_number": student.admission_number or "N/A",
                 "class_name": (
                     student.student_class.name if student.student_class else "N/A"
                 ),
+                "gender": getattr(student, "gender", "N/A"),
+                "upi": getattr(student, "upi", None),
+                "kcpe_marks": getattr(student, "kcpe_marks", None),
+                "vap": getattr(student, "vap", None),
+                "photo": (
+                    student.photo.url
+                    if hasattr(student, "photo") and student.photo
+                    else None
+                ),
             },
             "term": term,
             "school_year": school_year,
-            "records": [
-                {
-                    "subject": record.subject.name,
-                    "score": float(record.score),
-                    "grade": record.grade,
-                    "comments": record.subject_comments,
-                    # "teacher": record.teacher.user.full_name if record.teacher else "",
-                    "teacher": (
-                        record.teacher.user.get_full_name() if record.teacher else ""
-                    ),
-                }
-                for record in academic_records
-            ],
-            "teacher_comments": [
-                {
-                    "type": comment.get_comment_type_display(),
-                    "content": comment.content,
-                    # "teacher": comment.teacher.user.full_name,
-                    "teacher": comment.teacher.user.get_full_name(),
-                }
-                for comment in comments
-            ],
-            "class_average": float(class_average) if class_average else None,
+            "records": records_data,
+            "total_marks": int(total_marks),
+            "max_marks": max_marks,
+            "mean_mark": mean_mark,
+            "total_points": total_points,
+            "max_points": max_points,
+            "overall_grade": overall_grade,
+            "stream_position": stream_position,
+            "stream_total": stream_total,
+            "overall_position": overall_position,
+            "overall_total": overall_total,
+            "class_teacher_name": class_teacher_name,
+            "class_teacher_comment": class_teacher_comment,
+            "class_teacher_signature": class_teacher_signature,
+            "head_name": head_name,
+            "head_comment": head_comment,
+            "head_signature": head_signature,
+            "term_end_date": (
+                term_end_date.strftime("%d/%m/%Y") if term_end_date else ""
+            ),
+            "next_term_start_date": (
+                next_term_start.strftime("%d/%m/%Y") if next_term_start else ""
+            ),
         }
 
         # Generate the report based on template preference
@@ -273,6 +540,7 @@ def generate_report_for_student(
 
     except Exception as e:
         logger.error(f"Failed to generate report for student {student.id}: {str(e)}")
+        logger.error(traceback.format_exc())
         return None
 
 
@@ -678,38 +946,28 @@ def calculate_class_average(school_class, term, school_year):
 
 def get_term_start_date(term, school_year):
     """Get start date for a term"""
-    from skul_data.scheduler.models.scheduler import SchoolEvent
+    year = int(school_year.split("-")[0]) if "-" in school_year else int(school_year)
 
-    try:
-        calendar = SchoolEvent.objects.get(term=term, school_year=school_year)
-        return calendar.start_date
-    except SchoolEvent.DoesNotExist:
-        # Fallback logic
-        year = int(school_year.split("-")[0])
-        if term == "Term 1":
-            return datetime(year, 1, 10).date()
-        elif term == "Term 2":
-            return datetime(year, 5, 10).date()
-        else:  # Term 3
-            return datetime(year, 9, 10).date()
+    if term == "Term 1":
+        return datetime(year, 1, 10).date()
+    elif term == "Term 2":
+        return datetime(year, 5, 10).date()
+    else:  # Term 3
+        return datetime(year, 9, 10).date()
 
 
 def get_term_end_date(term, school_year):
     """Get end date for a term"""
-    from skul_data.scheduler.models.scheduler import SchoolEvent
+    # Since SchoolEvent doesn't have term/school_year fields,
+    # use fallback logic directly
+    year = int(school_year.split("-")[0]) if "-" in school_year else int(school_year)
 
-    try:
-        calendar = SchoolEvent.objects.get(term=term, school_year=school_year)
-        return calendar.end_date
-    except SchoolEvent.DoesNotExist:
-        # Fallback logic
-        year = int(school_year.split("-")[0])
-        if term == "Term 1":
-            return datetime(year, 4, 5).date()
-        elif term == "Term 2":
-            return datetime(year, 8, 5).date()
-        else:  # Term 3
-            return datetime(year, 12, 15).date()
+    if term == "Term 1":
+        return datetime(year, 4, 5).date()
+    elif term == "Term 2":
+        return datetime(year, 8, 5).date()
+    else:  # Term 3
+        return datetime(year, 12, 15).date()
 
 
 def get_teacher_comments(student, term, school_year):

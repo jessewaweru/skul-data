@@ -3,6 +3,7 @@ from decouple import config
 from datetime import timedelta
 from celery.schedules import crontab
 import sys
+import os
 
 
 AUTH_USER_MODEL = "users.User"
@@ -10,6 +11,7 @@ AUTH_USER_MODEL = "users.User"
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+PROJECT_ROOT = BASE_DIR.parent
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
@@ -228,6 +230,8 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
 STATIC_URL = "static/"
+MEDIA_URL = "/media/"
+MEDIA_ROOT = PROJECT_ROOT / "media"
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
@@ -336,3 +340,5 @@ LOGGING = {
         },
     },
 }
+
+X_FRAME_OPTIONS = "SAMEORIGIN"

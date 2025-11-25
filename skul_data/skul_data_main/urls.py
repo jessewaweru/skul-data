@@ -4,6 +4,8 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
 from rest_framework.permissions import AllowAny
+from django.conf.urls.static import static
+from skul_data.skul_data_main import settings
 
 
 schema_view = get_schema_view(
@@ -81,3 +83,14 @@ urlpatterns = [
         ),
     ),
 ]
+
+# Always add media URLs in development (simpler approach)
+try:
+    from django.conf import settings as django_settings
+
+    if hasattr(django_settings, "MEDIA_URL") and hasattr(django_settings, "MEDIA_ROOT"):
+        urlpatterns += static(
+            django_settings.MEDIA_URL, document_root=django_settings.MEDIA_ROOT
+        )
+except:
+    pass

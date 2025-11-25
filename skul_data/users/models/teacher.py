@@ -40,6 +40,12 @@ class Teacher(models.Model):
     payroll_number = models.CharField(max_length=50, blank=True, null=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
+    signature = models.ImageField(
+        upload_to="signatures/teachers/",
+        null=True,
+        blank=True,
+        help_text="Teacher's signature image",
+    )
 
     is_administrator = models.BooleanField(default=False)
     administrator_since = models.DateField(null=True, blank=True)

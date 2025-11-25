@@ -13,6 +13,12 @@ class SchoolAdmin(models.Model):
         School, on_delete=models.CASCADE, related_name="primary_admins"
     )
     is_primary = models.BooleanField(default=True)
+    signature = models.ImageField(
+        upload_to="signatures/staff/",
+        null=True,
+        blank=True,
+        help_text="User's signature image",
+    )
 
     class Meta:
         verbose_name = "School Administrator"
@@ -63,6 +69,12 @@ class AdministratorProfile(models.Model):
     notes = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    signature = models.ImageField(
+        upload_to="signatures/staff/",
+        null=True,
+        blank=True,
+        help_text="User's signature image",
+    )
 
     class Meta:
         ordering = ["-date_appointed"]

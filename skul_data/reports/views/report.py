@@ -169,6 +169,94 @@ class GeneratedReportViewSet(viewsets.ModelViewSet):
 
         return Response({"status": "approved"})
 
+    @action(detail=True, methods=["get"])
+    def download(self, request, pk=None):
+        """Download a generated report file"""
+        report = self.get_object()
+
+        # Log the download
+        ReportGenerator.log_report_access(
+            report=report, user=request.user, action="DOWNLOADED", request=request
+        )
+
+        try:
+            if not report.file:
+                return Response(
+                    {"error": "Report file not found"}, status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Open the file
+            file_path = report.file.path
+            if not os.path.exists(file_path):
+                return Response(
+                    {"error": "Report file does not exist"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # Determine content type
+            content_type = {
+                "PDF": "application/pdf",
+                "EXCEL": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                "CSV": "text/csv",
+                "HTML": "text/html",
+            }.get(report.file_format, "application/octet-stream")
+
+            # Generate filename
+            filename = f"{report.title}.{report.file_format.lower()}"
+
+            # Return file response
+            response = FileResponse(open(file_path, "rb"), content_type=content_type)
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
+            return response
+
+        except Exception as e:
+            logger.error(f"Error downloading report {report.id}: {str(e)}")
+            return Response(
+                {"error": "Failed to download report"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @action(detail=True, methods=["get"])
+    def view(self, request, pk=None):
+        """View/preview a report in browser"""
+        report = self.get_object()
+
+        # Log the view
+        ReportGenerator.log_report_access(
+            report=report, user=request.user, action="VIEWED", request=request
+        )
+
+        try:
+            if not report.file:
+                return Response(
+                    {"error": "Report file not found"}, status=status.HTTP_404_NOT_FOUND
+                )
+
+            file_path = report.file.path
+            if not os.path.exists(file_path):
+                return Response(
+                    {"error": "Report file does not exist"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # Determine content type
+            content_type = {
+                "PDF": "application/pdf",
+                "HTML": "text/html",
+            }.get(report.file_format, "application/octet-stream")
+
+            # Return inline response for viewing
+            response = FileResponse(open(file_path, "rb"), content_type=content_type)
+            response["Content-Disposition"] = "inline"
+            return response
+
+        except Exception as e:
+            logger.error(f"Error viewing report {report.id}: {str(e)}")
+            return Response(
+                {"error": "Failed to view report"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
     def _send_approval_notifications(self, report):
         # Implementation for sending notifications would go here
         pass

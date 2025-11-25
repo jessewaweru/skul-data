@@ -3,6 +3,7 @@ from django.utils import timezone
 from skul_data.action_logs.utils.action_log import log_action
 from skul_data.action_logs.models.action_log import ActionCategory
 from django.db.models import Max
+from django.core.validators import MinValueValidator, MaxValueValidator
 
 
 class StudentStatus(models.TextChoices):
@@ -76,6 +77,18 @@ class Student(models.Model):
         ],
         blank=True,
         null=True,
+    )
+    photo = models.ImageField(
+        upload_to="students/photos/",
+        null=True,
+        blank=True,
+        help_text="Student's photograph",
+    )
+    kcpe_marks = models.IntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0), MaxValueValidator(500)],
+        help_text="KCPE examination marks",
     )
 
     created_at = models.DateTimeField(default=timezone.now)

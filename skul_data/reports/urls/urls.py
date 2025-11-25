@@ -1,3 +1,4 @@
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 from skul_data.reports.views.report import (
     ReportTemplateViewSet,
@@ -33,5 +34,10 @@ router.register(r"teacher-comments", TeacherCommentViewSet, basename="teacher-co
 router.register(r"academic-records", AcademicRecordViewSet, basename="academic-record")
 
 urlpatterns = router.urls + [
+    path(
+        "academic/",
+        AcademicReportViewSet.as_view({"post": "generate_term_reports"}),
+        name="academic-reports",
+    ),
     # Additional custom endpoints can be added here
 ]
