@@ -30,6 +30,8 @@ from skul_data.users.models.school_admin import SchoolAdmin
 from skul_data.action_logs.utils.action_log import log_action
 from skul_data.action_logs.models.action_log import ActionCategory
 from skul_data.reports.models.academic_record import AcademicRecord
+from django.utils import timezone
+from datetime import timedelta
 
 
 class SchoolClassViewSet(viewsets.ModelViewSet):
@@ -181,49 +183,6 @@ class SchoolClassViewSet(viewsets.ModelViewSet):
             return Response(
                 {"error": "Teacher not found"}, status=status.HTTP_404_NOT_FOUND
             )
-
-    # @action(detail=False, methods=["get"])
-    # def analytics(self, request):
-    #     """Class analytics for dashboard"""
-    #     # Log the analytics view
-    #     # Log the analytics view
-    #     log_action(
-    #         user=request.user,
-    #         action="Viewed class analytics",
-    #         category=ActionCategory.VIEW,
-    #         metadata={"path": request.path, "query_params": dict(request.GET)},
-    #     )
-
-    #     queryset = self.filter_queryset(self.get_queryset())
-
-    #     # Basic counts
-    #     total_classes = queryset.count()
-    #     classes_by_level = queryset.values("level").annotate(count=Count("id"))
-    #     classes_by_grade = queryset.values("grade_level").annotate(count=Count("id"))
-
-    #     # Student distribution
-    #     student_distribution = (
-    #         queryset.annotate(student_count=Count("students"))
-    #         .values("name", "student_count")
-    #         .order_by("-student_count")
-    #     )
-
-    #     # Performance analytics
-    #     performance_data = (
-    #         queryset.annotate(avg_performance=Avg("students__academic_records__score"))
-    #         .values("name", "avg_performance")
-    #         .order_by("-avg_performance")
-    #     )
-
-    #     return Response(
-    #         {
-    #             "total_classes": total_classes,
-    #             "classes_by_level": classes_by_level,
-    #             "classes_by_grade": classes_by_grade,
-    #             "student_distribution": student_distribution,
-    #             "performance_data": performance_data,
-    #         }
-    #     )
 
     @action(detail=True, methods=["get"], url_path="analytics")
     def analytics(self, request, pk=None):
@@ -662,16 +621,8 @@ class ClassAttendanceViewSet(viewsets.ModelViewSet):
     serializer_class = ClassAttendanceSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["school_class", "date", "taken_by"]
-    # permission_classes = [IsAuthenticated, HasRolePermission]
+    permission_classes = [IsAuthenticated, HasRolePermission]
 
-    # UPDATED PERMISSIONS:
-    def get_permissions(self):
-        if self.action == "mark_attendance":
-            # Allow teachers to mark attendance for their classes
-            return [IsAuthenticated(), HasRolePermission()]
-        return [IsAuthenticated(), HasRolePermission()]
-
-    # Set specific permissions
     required_permission_get = "view_attendance"
     required_permission_post = "manage_attendance"
     required_permission_put = "manage_attendance"
@@ -682,6 +633,10 @@ class ClassAttendanceViewSet(viewsets.ModelViewSet):
         user = self.request.user
 
         if user.user_type == User.SCHOOL_ADMIN:
+            # Admin sees all attendance for their school
+            if hasattr(user, "school_admin_profile"):
+                school = user.school_admin_profile.school
+                return queryset.filter(school_class__school=school)
             return queryset
 
         school = getattr(user, "school", None)
@@ -691,35 +646,267 @@ class ClassAttendanceViewSet(viewsets.ModelViewSet):
         queryset = queryset.filter(school_class__school=school)
 
         if user.user_type == User.TEACHER:
-            # UPDATED: Allow teachers to see attendance for their classes
+            # Teachers see attendance for their classes
             return queryset.filter(
-                models.Q(school_class__class_teacher=user.teacher_profile)
-                | models.Q(taken_by=user)
+                Q(school_class__class_teacher=user.teacher_profile) | Q(taken_by=user)
             )
 
         return queryset
+
+    def _notify_parents_about_attendance(self, attendance):
+        """
+        Send notifications to parents about attendance.
+        This method handles Database notifications, WebSocket notifications,
+        and Email notifications (when configured).
+        """
+        from skul_data.notifications.models.notification import Notification
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        # Get all students in the class
+        all_students = attendance.school_class.students.all()
+        present_students = set(attendance.present_students.all())
+
+        # Get channel layer for WebSocket notifications
+        channel_layer = get_channel_layer()
+
+        # Notify parents of PRESENT students
+        for student in present_students:
+            parents = []
+            if student.parent:
+                parents.append(student.parent)
+            parents.extend(list(student.guardians.all()))
+
+            for parent in parents:
+                try:
+                    # 1. Create database notification
+                    notification = Notification.objects.create(
+                        user=parent.user,
+                        notification_type="SYSTEM",
+                        title=f"✓ Attendance Confirmed: {student.full_name}",
+                        message=(
+                            f"{student.full_name} attended {attendance.school_class.name} "
+                            f"on {attendance.date.strftime('%B %d, %Y')}.\n\n"
+                            f"Class: {attendance.school_class.name}\n"
+                            f"Time: {attendance.created_at.strftime('%I:%M %p')}\n"
+                            f"Recorded by: {attendance.taken_by.get_full_name() if attendance.taken_by else 'System'}"
+                        ),
+                        related_model="ClassAttendance",
+                        related_id=attendance.id,
+                    )
+
+                    # 2. Send WebSocket notification (real-time)
+                    if channel_layer:
+                        try:
+                            async_to_sync(channel_layer.group_send)(
+                                f"notifications_{parent.user.id}",
+                                {
+                                    "type": "notification.message",
+                                    "message": {
+                                        "id": notification.id,
+                                        "type": "SYSTEM",
+                                        "title": notification.title,
+                                        "message": notification.message,
+                                        "student_name": student.full_name,
+                                        "class_name": attendance.school_class.name,
+                                        "date": attendance.date.isoformat(),
+                                        "is_present": True,
+                                        "created_at": notification.created_at.isoformat(),
+                                    },
+                                },
+                            )
+                        except Exception as e:
+                            logger.warning(f"WebSocket notification failed: {str(e)}")
+
+                    # 3. Send Email notification (if configured)
+                    self._send_attendance_email(
+                        parent, student, attendance, is_present=True
+                    )
+
+                except Exception as e:
+                    logger.error(
+                        f"Failed to notify parent {parent.user.email} about attendance: {str(e)}"
+                    )
+
+        # Notify parents of ABSENT students
+        absent_students = [s for s in all_students if s not in present_students]
+
+        for student in absent_students:
+            # Extract absence reason for this student
+            absence_reason = ""
+            if attendance.notes:
+                for line in attendance.notes.split("\n"):
+                    if student.full_name in line:
+                        absence_reason = (
+                            line.split(":", 1)[1].strip() if ":" in line else ""
+                        )
+                        break
+
+            parents = []
+            if student.parent:
+                parents.append(student.parent)
+            parents.extend(list(student.guardians.all()))
+
+            for parent in parents:
+                try:
+                    # 1. Create database notification
+                    message = (
+                        f"{student.full_name} was absent from {attendance.school_class.name} "
+                        f"on {attendance.date.strftime('%B %d, %Y')}.\n\n"
+                        f"Class: {attendance.school_class.name}\n"
+                        f"Date: {attendance.date.strftime('%B %d, %Y')}\n"
+                    )
+                    if absence_reason:
+                        message += f"Reason: {absence_reason}\n"
+                    else:
+                        message += "Reason: Not specified\n"
+
+                    message += f"\nIf this is incorrect, please contact {attendance.taken_by.get_full_name() if attendance.taken_by else 'the school'}."
+
+                    notification = Notification.objects.create(
+                        user=parent.user,
+                        notification_type="EVENT",
+                        title=f"⚠ Absence Alert: {student.full_name}",
+                        message=message,
+                        related_model="ClassAttendance",
+                        related_id=attendance.id,
+                    )
+
+                    # 2. Send WebSocket notification
+                    if channel_layer:
+                        try:
+                            async_to_sync(channel_layer.group_send)(
+                                f"notifications_{parent.user.id}",
+                                {
+                                    "type": "notification.message",
+                                    "message": {
+                                        "id": notification.id,
+                                        "type": "EVENT",
+                                        "title": notification.title,
+                                        "message": notification.message,
+                                        "student_name": student.full_name,
+                                        "class_name": attendance.school_class.name,
+                                        "date": attendance.date.isoformat(),
+                                        "is_present": False,
+                                        "absence_reason": absence_reason,
+                                        "created_at": notification.created_at.isoformat(),
+                                    },
+                                },
+                            )
+                        except Exception as e:
+                            logger.warning(f"WebSocket notification failed: {str(e)}")
+
+                    # 3. Send Email notification
+                    self._send_attendance_email(
+                        parent,
+                        student,
+                        attendance,
+                        is_present=False,
+                        absence_reason=absence_reason,
+                    )
+
+                except Exception as e:
+                    logger.error(
+                        f"Failed to notify parent {parent.user.email} about absence: {str(e)}"
+                    )
+
+    def _send_attendance_email(
+        self, parent, student, attendance, is_present, absence_reason=None
+    ):
+        """
+        Send email notification to parent.
+        This will fail silently if email is not configured.
+        """
+        try:
+            from django.core.mail import EmailMessage
+            from django.conf import settings
+            import logging
+
+            logger = logging.getLogger(__name__)
+
+            # Check if email is configured
+            if not hasattr(settings, "EMAIL_HOST") or not settings.EMAIL_HOST:
+                logger.info("Email not configured - skipping email notification")
+                return False
+
+            school = attendance.school_class.school
+
+            # Prepare email content
+            if is_present:
+                subject = f"✓ {student.full_name} - Attendance Confirmed"
+                message = (
+                    f"Dear {parent.user.first_name},\n\n"
+                    f"This is to confirm that {student.full_name} attended {attendance.school_class.name} "
+                    f"on {attendance.date.strftime('%B %d, %Y')}.\n\n"
+                    f"Class: {attendance.school_class.name}\n"
+                    f"Time: {attendance.created_at.strftime('%I:%M %p')}\n"
+                    f"Recorded by: {attendance.taken_by.get_full_name() if attendance.taken_by else 'System'}\n\n"
+                    f"Best regards,\n{school.name}"
+                )
+            else:
+                subject = f"⚠ {student.full_name} - Absence Alert"
+                message = (
+                    f"Dear {parent.user.first_name},\n\n"
+                    f"{student.full_name} was marked absent from {attendance.school_class.name} "
+                    f"on {attendance.date.strftime('%B %d, %Y')}.\n\n"
+                    f"Class: {attendance.school_class.name}\n"
+                )
+                if absence_reason:
+                    message += f"Reason: {absence_reason}\n"
+                message += (
+                    f"\nIf this is incorrect, please contact the school immediately.\n\n"
+                    f"Best regards,\n{school.name}"
+                )
+
+            # Create and send email
+            email = EmailMessage(
+                subject=subject,
+                body=message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[parent.user.email],
+            )
+
+            email.send(fail_silently=True)
+            logger.info(f"Attendance email sent to {parent.user.email}")
+            return True
+
+        except Exception as e:
+            # Log but don't raise - email is optional
+            logger.warning(
+                f"Email notification failed (this is OK if email not configured): {str(e)}"
+            )
+            return False
 
     def perform_create(self, serializer):
         user = self.request.user
         school_class = serializer.validated_data.get("school_class")
 
-        # Additional check for teachers
+        # Check if teacher can take attendance for this class
         if (
-            user.user_type == "teacher"
+            user.user_type == User.TEACHER
             and school_class.class_teacher != user.teacher_profile
         ):
             raise PermissionDenied(
                 "You can only take attendance for your assigned classes"
             )
 
-        serializer.save(taken_by=user)
+        # Save attendance
+        attendance = serializer.save(taken_by=user)
+
+        # Send notifications to parents (Database + WebSocket + Email if configured)
+        self._notify_parents_about_attendance(attendance)
 
     @action(detail=True, methods=["post"])
     def mark_attendance(self, request, pk=None):
+        """Mark attendance for students with optional absence reasons"""
         attendance = self.get_object()
         student_ids = request.data.get("student_ids", [])
+        absent_reasons = request.data.get("absent_reasons", {})
 
-        # ADDED: Check if teacher can mark attendance for this class
+        # Check permissions
         if (
             request.user.user_type == User.TEACHER
             and attendance.school_class.class_teacher != request.user.teacher_profile
@@ -729,8 +916,26 @@ class ClassAttendanceViewSet(viewsets.ModelViewSet):
             )
 
         try:
+            # Update attendance
             attendance._current_user = request.user
             attendance.update_attendance(student_ids, user=request.user)
+
+            # Store absence reasons in notes
+            if absent_reasons:
+                absent_notes = []
+                for student_id, reason in absent_reasons.items():
+                    try:
+                        student = Student.objects.get(id=student_id)
+                        absent_notes.append(f"{student.full_name}: {reason}")
+                    except Student.DoesNotExist:
+                        pass
+
+                if absent_notes:
+                    attendance.notes = "\n".join(absent_notes)
+                    attendance.save(update_fields=["notes"])
+
+            # Send notifications to parents (Database + WebSocket + Email if configured)
+            self._notify_parents_about_attendance(attendance)
 
             # Log the action
             log_action(
@@ -741,6 +946,7 @@ class ClassAttendanceViewSet(viewsets.ModelViewSet):
                 metadata={
                     "total_present": len(student_ids),
                     "student_ids": student_ids,
+                    "absent_reasons": absent_reasons,
                 },
             )
 
@@ -749,3 +955,104 @@ class ClassAttendanceViewSet(viewsets.ModelViewSet):
             )
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=["get"])
+    def stats_by_class(self, request):
+        """Get attendance statistics for a specific class"""
+        class_id = request.query_params.get("class_id")
+
+        if not class_id:
+            return Response(
+                {"error": "class_id parameter is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            school_class = SchoolClass.objects.get(id=class_id)
+
+            # Check permissions
+            if request.user.user_type == User.SCHOOL_ADMIN:
+                if (
+                    not hasattr(request.user, "school_admin_profile")
+                    or request.user.school_admin_profile.school != school_class.school
+                ):
+                    raise PermissionDenied()
+            elif request.user.user_type == User.TEACHER:
+                if school_class.class_teacher != request.user.teacher_profile:
+                    raise PermissionDenied()
+
+            # Get date range
+            date_from = request.query_params.get(
+                "date_from", (timezone.now() - timedelta(days=30)).date()
+            )
+            date_to = request.query_params.get("date_to", timezone.now().date())
+
+            # Get attendance records
+            attendance_records = ClassAttendance.objects.filter(
+                school_class=school_class, date__range=[date_from, date_to]
+            ).order_by("-date")
+
+            # Calculate statistics
+            total_records = attendance_records.count()
+            total_students = school_class.students.count()
+
+            if total_records == 0:
+                return Response(
+                    {
+                        "class_name": school_class.name,
+                        "total_students": total_students,
+                        "average_attendance_rate": 0,
+                        "total_records": 0,
+                        "recent_records": [],
+                    }
+                )
+
+            # Calculate average attendance rate
+            total_present = sum(
+                record.present_students.count() for record in attendance_records
+            )
+            average_rate = (
+                (total_present / (total_records * total_students) * 100)
+                if total_students > 0
+                else 0
+            )
+
+            # Get recent records
+            recent_records = []
+            for record in attendance_records[:10]:
+                present_count = record.present_students.count()
+                recent_records.append(
+                    {
+                        "id": record.id,
+                        "date": record.date,
+                        "present_count": present_count,
+                        "absent_count": total_students - present_count,
+                        "attendance_rate": record.attendance_rate,
+                        "taken_by": (
+                            record.taken_by.get_full_name()
+                            if record.taken_by
+                            else "System"
+                        ),
+                        "notes": record.notes,
+                    }
+                )
+
+            return Response(
+                {
+                    "class_name": school_class.name,
+                    "class_id": school_class.id,
+                    "total_students": total_students,
+                    "average_attendance_rate": round(average_rate, 2),
+                    "total_records": total_records,
+                    "recent_records": recent_records,
+                }
+            )
+
+        except SchoolClass.DoesNotExist:
+            return Response(
+                {"error": "Class not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

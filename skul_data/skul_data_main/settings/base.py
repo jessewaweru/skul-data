@@ -342,3 +342,39 @@ LOGGING = {
 }
 
 X_FRAME_OPTIONS = "SAMEORIGIN"
+
+# For development - Console backend (emails will print to console)
+# Your incoming developer can change this to SMTP when ready for production
+EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+
+# When ready for production, your developer can uncomment and configure:
+# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+# EMAIL_HOST = config('EMAIL_HOST', 'smtp.gmail.com')
+# EMAIL_PORT = config('EMAIL_PORT', 587)
+# EMAIL_USE_TLS = config('EMAIL_USE_TLS', True)
+# EMAIL_HOST_USER = config('EMAIL_HOST_USER', '')
+# EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', '')  # Use app-specific password for Gmail
+# DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', 'Skul Data <noreply@skuldata.com>')
+
+# For now, set a default from email for console backend
+DEFAULT_FROM_EMAIL = "Skul Data <noreply@skuldata.com>"
+
+# Set to True when your developer configures Twilio
+ENABLE_SMS_NOTIFICATIONS = False
+
+# When ready for SMS, your developer can configure:
+# TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID', '')
+# TWILIO_AUTH_TOKEN = config('TWILIO_AUTH_TOKEN', '')
+# TWILIO_PHONE_NUMBER = config('TWILIO_PHONE_NUMBER', '')
+
+# ============================================================================
+# NOTIFICATION SETTINGS
+# ============================================================================
+
+# Control which notification channels are active
+NOTIFICATION_CHANNELS = {
+    "database": True,  # Always enabled - stores notifications in DB
+    "websocket": True,  # Real-time notifications (already working)
+    "email": True,  # Enabled but will use console backend for now
+    "sms": False,  # Disabled until Twilio is configured
+}
