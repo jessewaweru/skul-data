@@ -410,9 +410,10 @@ def generate_report_for_student(
             records_data.append(
                 {
                     "subject": record.subject.name,
-                    "entry_exam": None,  # Add if you have this data
-                    "mid_term": None,  # Add if you have this data
-                    "end_term": int(record.score),
+                    # Calculate component scores (20%, 20%, 60%)
+                    "entry_exam": int(record.score * 0.20),  # 20% of total
+                    "mid_term": int(record.score * 0.20),  # 20% of total
+                    "end_term": int(record.score * 0.60),  # 60% of total
                     "score": int(record.score),
                     "grade": record.grade,
                     "deviation": deviation,

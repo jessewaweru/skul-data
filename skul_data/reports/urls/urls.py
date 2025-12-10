@@ -14,6 +14,10 @@ from skul_data.reports.views.academic_record import (
     TeacherCommentViewSet,
     AcademicRecordViewSet,
 )
+from skul_data.reports.views.report import (
+    generate_performance_template,
+    upload_performance,
+)
 
 router = DefaultRouter()
 router.register(r"templates", ReportTemplateViewSet, basename="report-template")
@@ -39,5 +43,11 @@ urlpatterns = router.urls + [
         AcademicReportViewSet.as_view({"post": "generate_term_reports"}),
         name="academic-reports",
     ),
+    path(
+        "generate-performance-template/",
+        generate_performance_template,
+        name="generate-performance-template",
+    ),
+    path("upload-performance/", upload_performance, name="upload-performance"),
     # Additional custom endpoints can be added here
 ]

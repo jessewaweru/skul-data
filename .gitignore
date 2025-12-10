@@ -44,6 +44,11 @@ docker-compose.override.yml
 # Ignore all image files
 *.jpg
 *.jpeg
+*.png
+*.gif
+*.svg
+*.bmp  
+*.ai
 
 # Ignore all csv files
 *.csv

@@ -6,6 +6,7 @@ from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 from skul_data.reports.models.report import (
     ReportTemplate,
+    GeneratedReport,
     ReportSchedule,
     ReportAccessLog,
     ReportNotification,
@@ -25,7 +26,6 @@ from skul_data.users.permissions.permission import (
     IsSchoolAdmin,
 )
 from django.db import models
-from skul_data.reports.models.report import GeneratedReport
 from skul_data.reports.serializers.report import (
     GeneratedReportSerializer,
     AcademicReportConfigSerializer,
@@ -33,10 +33,19 @@ from skul_data.reports.serializers.report import (
     GeneratedReportAccessSerializer,
 )
 from skul_data.users.models.base_user import User
-from rest_framework.permissions import OR
 from skul_data.schools.models.schoolclass import SchoolClass
 from skul_data.action_logs.utils.action_log import log_action
 from skul_data.action_logs.models.action_log import ActionCategory
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from django.http import HttpResponse
+from skul_data.schools.models.schoolclass import SchoolClass
+from skul_data.students.models.student import Student, Subject
+from skul_data.reports.models.academic_record import AcademicRecord
+from skul_data.users.models.base_user import User
+from decimal import Decimal
+import csv
+import io
 
 
 class ReportTemplateViewSet(viewsets.ModelViewSet):
@@ -442,3 +451,280 @@ class AcademicReportViewSet(viewsets.ViewSet):
         )
 
         return Response({"task_id": str(task_id)}, status=status.HTTP_202_ACCEPTED)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def generate_performance_template(request):
+    """
+    Generate a CSV template for teachers to fill in student performance.
+    Teachers can only generate templates for their assigned classes.
+    """
+    class_id = request.data.get("class_id")
+    subject_code = request.data.get("subject_code")
+    term = request.data.get("term", "Term 1")
+    school_year = request.data.get("school_year", "2025")
+
+    if not class_id or not subject_code:
+        return Response(
+            {"error": "class_id and subject_code are required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        school_class = SchoolClass.objects.get(id=class_id)
+
+        # Permission check: Teachers can only generate for their classes
+        user = request.user
+        if user.user_type == User.TEACHER:
+            teacher = user.teacher_profile
+            if school_class.class_teacher != teacher:
+                return Response(
+                    {
+                        "error": "You can only generate templates for your assigned classes"
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        # Get active students
+        students = school_class.students.filter(is_active=True).order_by(
+            "last_name", "first_name"
+        )
+
+        if students.count() == 0:
+            return Response(
+                {"error": f"No active students found in {school_class.name}"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Verify subject exists
+        try:
+            subject = Subject.objects.get(code=subject_code, school=school_class.school)
+        except Subject.DoesNotExist:
+            return Response(
+                {"error": f"Subject with code {subject_code} not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Generate CSV in memory
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        # Header row
+        writer.writerow(
+            [
+                "admission_number",
+                "student_name",
+                "subject_code",
+                "entry_score",
+                "mid_score",
+                "end_score",
+                "comments",
+            ]
+        )
+
+        # Instructions row
+        writer.writerow(
+            [
+                "(DO NOT EDIT)",
+                "(DO NOT EDIT)",
+                subject_code,
+                "(0-15)",
+                "(0-15)",
+                "(0-70)",
+                "(Optional remarks)",
+            ]
+        )
+
+        # Student rows
+        for student in students:
+            writer.writerow(
+                [
+                    student.admission_number,
+                    student.full_name,
+                    subject_code,
+                    "",  # entry_score - to be filled
+                    "",  # mid_score - to be filled
+                    "",  # end_score - to be filled
+                    "",  # comments - to be filled
+                ]
+            )
+
+        # Create HTTP response with CSV
+        output.seek(0)
+        response = HttpResponse(output.getvalue(), content_type="text/csv")
+        filename = f"{school_class.name}_{subject.name}_{term}_{school_year}.csv"
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+
+        return response
+
+    except SchoolClass.DoesNotExist:
+        return Response({"error": "Class not found"}, status=status.HTTP_404_NOT_FOUND)
+    except Exception as e:
+        return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def upload_performance(request):
+    """
+    Upload student performance data from CSV file.
+    Creates or updates AcademicRecord entries.
+    """
+    if "file" not in request.FILES:
+        return Response(
+            {"error": "No file provided"}, status=status.HTTP_400_BAD_REQUEST
+        )
+
+    csv_file = request.FILES["file"]
+    class_id = request.data.get("class_id")
+    subject_code = request.data.get("subject_code")
+    term = request.data.get("term", "Term 1")
+    school_year = request.data.get("school_year", "2025")
+
+    if not all([class_id, subject_code, term, school_year]):
+        return Response(
+            {"error": "class_id, subject_code, term, and school_year are required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    user = request.user
+
+    try:
+        # Get teacher profile
+        if user.user_type == User.TEACHER:
+            teacher = user.teacher_profile
+        else:
+            # For admins, use the class teacher
+            school_class = SchoolClass.objects.get(id=class_id)
+            teacher = school_class.class_teacher
+            if not teacher:
+                return Response(
+                    {"error": "No class teacher assigned to this class"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # Permission check for teachers
+        if user.user_type == User.TEACHER:
+            school_class = SchoolClass.objects.get(id=class_id)
+            if school_class.class_teacher != teacher:
+                return Response(
+                    {
+                        "error": "You can only upload performance for your assigned classes"
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        # Get subject
+        subject = Subject.objects.get(code=subject_code, school=teacher.school)
+
+        # Process CSV file
+        decoded_file = csv_file.read().decode("utf-8")
+        io_string = io.StringIO(decoded_file)
+        reader = csv.DictReader(io_string)
+
+        created = 0
+        updated = 0
+        errors = []
+
+        for row_num, row in enumerate(reader, start=1):
+            # Skip instruction row
+            if row["admission_number"] == "(DO NOT EDIT)":
+                continue
+
+            try:
+                # Validate required fields
+                if not row.get("admission_number"):
+                    errors.append({"row": row_num, "error": "Missing admission number"})
+                    continue
+
+                # Get student
+                student = Student.objects.get(
+                    admission_number=row["admission_number"], school=teacher.school
+                )
+
+                # Validate and calculate scores
+                try:
+                    entry = int(row.get("entry_score") or 0)
+                    mid = int(row.get("mid_score") or 0)
+                    end = int(row.get("end_score") or 0)
+
+                    # Validate score ranges
+                    if not (0 <= entry <= 15):
+                        raise ValueError("Entry score must be 0-15")
+                    if not (0 <= mid <= 15):
+                        raise ValueError("Mid score must be 0-15")
+                    if not (0 <= end <= 70):
+                        raise ValueError("End score must be 0-70")
+
+                    total_score = entry + mid + end
+
+                except ValueError as e:
+                    errors.append(
+                        {
+                            "row": row_num,
+                            "student": row.get("student_name", "Unknown"),
+                            "error": f"Invalid score: {str(e)}",
+                        }
+                    )
+                    continue
+
+                # Create or update academic record
+                record, is_new = AcademicRecord.objects.update_or_create(
+                    student=student,
+                    subject=subject,
+                    term=term,
+                    school_year=school_year,
+                    defaults={
+                        "teacher": teacher,
+                        "score": Decimal(str(total_score)),
+                        "subject_comments": row.get("comments", ""),
+                        "is_published": False,  # Not published until reviewed
+                    },
+                )
+
+                if is_new:
+                    created += 1
+                else:
+                    updated += 1
+
+            except Student.DoesNotExist:
+                errors.append(
+                    {
+                        "row": row_num,
+                        "error": f"Student with admission number {row.get('admission_number')} not found",
+                    }
+                )
+            except Exception as e:
+                errors.append(
+                    {
+                        "row": row_num,
+                        "student": row.get("student_name", "Unknown"),
+                        "error": str(e),
+                    }
+                )
+
+        # Return summary
+        return Response(
+            {
+                "created": created,
+                "updated": updated,
+                "errors": errors,
+                "total_processed": created + updated,
+                "message": f"Successfully processed {created + updated} records",
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    except SchoolClass.DoesNotExist:
+        return Response({"error": "Class not found"}, status=status.HTTP_404_NOT_FOUND)
+    except Subject.DoesNotExist:
+        return Response(
+            {"error": f"Subject with code {subject_code} not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    except Exception as e:
+        return Response(
+            {"error": f"Upload failed: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
