@@ -12,6 +12,8 @@ from skul_data.reports.models.academic_record import AcademicRecord, TeacherComm
 from skul_data.reports.models.report import ReportTemplate
 from skul_data.reports.utils.report_generator import generate_class_term_reports
 import random
+import os
+from django.conf import settings
 
 
 class Command(BaseCommand):
@@ -52,6 +54,15 @@ class Command(BaseCommand):
                 f"{'='*60}\n"
             )
         )
+
+        # Step 0: Assign photos to students if they don't have them
+        self.assign_student_photos(school_class)
+
+        # Step 0.5: Assign school logo if not set
+        self.assign_school_logo(school)
+
+        # Step 0.75: Assign teacher signatures
+        self.assign_teacher_signatures(school, school_class)
 
         # Step 1: Setup subjects with specific teachers
         subjects_config = self.setup_subjects_with_teachers(school, school_class)
@@ -122,6 +133,110 @@ class Command(BaseCommand):
         except Exception as e:
             self.stdout.write(self.style.ERROR(f"Failed to generate reports: {str(e)}"))
 
+    def assign_student_photos(self, school_class):
+        """Assign photos to students from the student_photos folder"""
+        self.stdout.write("\n📸 Assigning student photos...")
+
+        students = school_class.students.filter(is_active=True)
+        photo_dir = os.path.join(settings.MEDIA_ROOT, "student_photos")
+
+        if not os.path.exists(photo_dir):
+            self.stdout.write(
+                self.style.WARNING(f"Photo directory not found: {photo_dir}")
+            )
+            return
+
+        # Get available photos
+        available_photos = [
+            f
+            for f in os.listdir(photo_dir)
+            if f.startswith("student_") and f.endswith((".jpg", ".jpeg", ".png"))
+        ]
+
+        if not available_photos:
+            self.stdout.write(
+                self.style.WARNING("No student photos found in student_photos folder")
+            )
+            return
+
+        updated_count = 0
+        for idx, student in enumerate(students):
+            if not student.photo:
+                # Cycle through available photos
+                photo_name = available_photos[idx % len(available_photos)]
+                student.photo = f"student_photos/{photo_name}"
+                student.save()
+                updated_count += 1
+                self.stdout.write(f"  ✓ Assigned {photo_name} to {student.full_name}")
+
+        self.stdout.write(
+            self.style.SUCCESS(f"Assigned photos to {updated_count} students")
+        )
+
+    def assign_school_logo(self, school):
+        """Assign school logo if not set"""
+        if not school.logo:
+            logo_dir = os.path.join(settings.MEDIA_ROOT, "school_logos")
+
+            if os.path.exists(logo_dir):
+                logos = [
+                    f
+                    for f in os.listdir(logo_dir)
+                    if f.endswith((".jpg", ".jpeg", ".png", ".svg"))
+                ]
+
+                if logos:
+                    school.logo = f"school_logos/{logos[0]}"
+                    school.save()
+                    self.stdout.write(
+                        self.style.SUCCESS(f"✓ Assigned logo to {school.name}")
+                    )
+                else:
+                    self.stdout.write(
+                        self.style.WARNING(
+                            "No school logos found in school_logos folder"
+                        )
+                    )
+            else:
+                self.stdout.write(
+                    self.style.WARNING(f"Logo directory not found: {logo_dir}")
+                )
+
+    def assign_teacher_signatures(self, school, school_class):
+        """Assign signatures to class teacher and principal"""
+        self.stdout.write("\n✍️ Assigning teacher signatures...")
+
+        signature_dir = os.path.join(settings.MEDIA_ROOT, "signatures")
+
+        if not os.path.exists(signature_dir):
+            self.stdout.write(
+                self.style.WARNING(f"Signature directory not found: {signature_dir}")
+            )
+            return
+
+        signatures = [
+            f for f in os.listdir(signature_dir) if f.endswith((".svg", ".png", ".jpg"))
+        ]
+
+        if not signatures:
+            self.stdout.write(
+                self.style.WARNING("No signatures found in signatures folder")
+            )
+            return
+
+        # Assign to class teacher
+        if school_class.class_teacher:
+            teacher = school_class.class_teacher
+            if not hasattr(teacher, "signature") or not teacher.signature:
+                # You'll need to add a signature field to your Teacher model
+                # For now, we'll store it in a way the template can access
+                self.stdout.write(
+                    self.style.WARNING(
+                        "Teacher model doesn't have signature field. "
+                        "Consider adding: signature = models.ImageField(upload_to='signatures/', ...)"
+                    )
+                )
+
     def setup_subjects_with_teachers(self, school, school_class):
         """Setup subjects and assign specific teachers to each"""
         self.stdout.write("\n📚 Setting up subjects with teachers...")
@@ -135,7 +250,6 @@ class Command(BaseCommand):
                     f"Only {len(teachers)} teachers found. Creating more..."
                 )
             )
-            # Create additional teachers if needed
             teachers = self.create_sample_teachers(school, needed=8 - len(teachers))
 
         # Subject-teacher assignments (rotating teachers)
@@ -158,7 +272,6 @@ class Command(BaseCommand):
                 defaults={"code": subject_data["code"]},
             )
 
-            # Assign a teacher (rotate through available teachers)
             teacher = teachers[idx % len(teachers)]
 
             subjects_config.append(
@@ -177,7 +290,6 @@ class Command(BaseCommand):
         """Generate realistic academic records for all students"""
         self.stdout.write("\n📝 Generating academic records...")
 
-        # Clear existing records for this term
         deleted_count = AcademicRecord.objects.filter(
             student__in=students, term=term, school_year=school_year
         ).delete()[0]
@@ -185,31 +297,23 @@ class Command(BaseCommand):
         if deleted_count > 0:
             self.stdout.write(f"  Cleared {deleted_count} existing records")
 
-        # Generate records for each student
         total_records = 0
         for student in students:
-            # Create performance profile for student (some excel, some struggle)
             base_performance = random.randint(40, 85)
 
             for subject_config in subjects_config:
-                # Vary performance by subject (+/- 15 points from base)
                 variation = random.randint(-15, 15)
                 score = max(30, min(95, base_performance + variation))
 
-                # Generate component scores with proper allocation (20%, 20%, 60%)
-                # Entry exam: 20% of 100 = 0-20 marks
                 entry = round((score * 0.20) + random.randint(-3, 3))
-                entry = max(0, min(20, entry))  # Clamp between 0-20
+                entry = max(0, min(20, entry))
 
-                # Mid exam: 20% of 100 = 0-20 marks
                 mid = round((score * 0.20) + random.randint(-3, 3))
-                mid = max(0, min(20, mid))  # Clamp between 0-20
+                mid = max(0, min(20, mid))
 
-                # End exam: 60% of 100 = 0-60 marks (remaining from total)
                 end = score - entry - mid
-                end = max(0, min(60, end))  # Clamp between 0-60
+                end = max(0, min(60, end))
 
-                # Generate appropriate comment based on performance
                 comments = self.generate_subject_comment(score)
 
                 AcademicRecord.objects.create(
@@ -219,6 +323,9 @@ class Command(BaseCommand):
                     term=term,
                     school_year=school_year,
                     score=Decimal(str(score)),
+                    entry_score=Decimal(str(entry)),
+                    mid_score=Decimal(str(mid)),
+                    end_score=Decimal(str(end)),
                     subject_comments=comments,
                     is_published=True,
                 )
@@ -280,7 +387,6 @@ class Command(BaseCommand):
         """Generate teacher comments for all students"""
         self.stdout.write("\n💬 Generating teacher comments...")
 
-        # Clear existing comments
         deleted_count = TeacherComment.objects.filter(
             student__in=students, term=term, school_year=school_year
         ).delete()[0]
@@ -288,14 +394,12 @@ class Command(BaseCommand):
         if deleted_count > 0:
             self.stdout.write(f"  Cleared {deleted_count} existing comments")
 
-        # Get class teacher or use first available teacher
         if school_class.class_teacher:
             teacher = school_class.class_teacher
         else:
             teacher = Teacher.objects.filter(school=school_class.school).first()
 
         for student in students:
-            # Calculate student's average for appropriate comment
             records = AcademicRecord.objects.filter(
                 student=student, term=term, school_year=school_year
             )

@@ -572,20 +572,9 @@
           {% for record in records %}
           <tr>
             <td class="subject-name">{{ record.subject }}</td>
-            <td>
-              {% if record.entry_exam %}{{ record.entry_exam }}{% else %}-{%
-              endif %}
-            </td>
-            <td>
-              {% if record.mid_term %}{{ record.mid_term }}{% else %}-{% endif
-              %}
-            </td>
-            <td>
-              <strong
-                >{% if record.end_term %}{{ record.end_term }}{% else %}-{%
-                endif %}</strong
-              >
-            </td>
+            <td>{{ record.entry_exam|default:"-" }}</td>
+            <td>{{ record.mid_term|default:"-" }}</td>
+            <td><strong>{{ record.end_term|default:"-" }}</strong></td>
             <td><strong>{{ record.score }}%</strong></td>
             <td class="grade-{{ record.grade }}">
               <strong>{{ record.grade }}</strong>
@@ -694,8 +683,8 @@
             <span class="comment-meta">{{ class_teacher_name }}</span>
           </div>
           <div class="comment-text">
-            {% if class_teacher_comment %} {{ class_teacher_comment }} {% else
-            %} Excellent performance. Keep up the good work! {% endif %}
+            {% if class_teacher_comment %}{{ class_teacher_comment }}{% else
+            %}Excellent performance. Keep up the good work!{% endif %}
           </div>
           <div class="signature-section">
             <div class="signature-area">
@@ -725,8 +714,8 @@
             >
           </div>
           <div class="comment-text">
-            {% if head_comment %} {{ head_comment }} {% else %} Well done.
-            Continue working hard to achieve your academic goals. {% endif %}
+            {% if head_comment %}{{ head_comment }}{% else %}Well done. Continue
+            working hard to achieve your academic goals.{% endif %}
           </div>
           <div class="signature-section">
             <div class="signature-area">

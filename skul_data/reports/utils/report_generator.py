@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime
 from django.utils import timezone
 from datetime import timedelta
@@ -24,11 +25,23 @@ from django.conf import settings
 from skul_data.action_logs.utils.action_log import log_action_async, log_action
 from skul_data.action_logs.models.action_log import ActionCategory
 from skul_data.students.models.student import Student
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
+from decimal import Decimal
 import logging
 import traceback
 
 logger = logging.getLogger(__name__)
+
+
+class DecimalEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles Decimal, date, and datetime objects"""
+
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return float(obj)
+        elif isinstance(obj, (date, datetime)):
+            return obj.isoformat()
+        return super().default(obj)
 
 
 class ReportGenerator:
@@ -38,27 +51,54 @@ class ReportGenerator:
         Generate a PDF report from a template and data
         Returns: GeneratedReport instance
         """
-        # Render HTML template with data
+        # Prepare context with all data
         context = {
-            **data,  # Spread all data
+            **data,
             "generated_date": datetime.now().strftime("%d/%m/%Y"),
         }
 
-        html_string = render_to_string(
-            f"reports/{template.template_type.lower()}_template.html", context
-        )
+        # CRITICAL FIX: Convert relative paths to absolute file:// URLs for WeasyPrint
+        if "school" in context and isinstance(context["school"], dict):
+            if context["school"].get("logo"):
+                logo_path = context["school"]["logo"]
+                # Ensure it's an absolute file path
+                if not logo_path.startswith("file://") and os.path.exists(logo_path):
+                    context["school"]["logo"] = f"file://{logo_path}"
+                    logger.info(f"School logo path: {context['school']['logo']}")
 
-        # Convert to PDF
-        html = HTML(string=html_string, base_url=settings.MEDIA_ROOT)
-        pdf_bytes = html.write_pdf()
+        if "student" in context and isinstance(context["student"], dict):
+            if context["student"].get("photo"):
+                photo_path = context["student"]["photo"]
+                # Ensure it's an absolute file path
+                if not photo_path.startswith("file://") and os.path.exists(photo_path):
+                    context["student"]["photo"] = f"file://{photo_path}"
+                    logger.info(f"Student photo path: {context['student']['photo']}")
 
-        # Create report instance
+        # Render the HTML template
+        try:
+            html_string = render_to_string("reports/academic_template.html", context)
+        except Exception as e:
+            logger.error(f"Template rendering failed: {str(e)}")
+            logger.error(f"Context keys: {list(context.keys())}")
+            raise
+
+        # Convert HTML to PDF using WeasyPrint
+        try:
+            # CRITICAL: Use base_url pointing to media root for relative paths
+            html = HTML(string=html_string, base_url=f"file://{settings.MEDIA_ROOT}/")
+            pdf_bytes = html.write_pdf()
+        except Exception as e:
+            logger.error(f"PDF generation failed: {str(e)}")
+            logger.error(f"Media root: {settings.MEDIA_ROOT}")
+            raise
+
+        # Create GeneratedReport instance
         report = GeneratedReport(
             title=title,
             report_type=template,
             school=school,
             generated_by=user,
-            data=json.dumps(data, default=str),
+            data=json.dumps(data, cls=DecimalEncoder),
             parameters={},
             file_format="PDF",
         )
@@ -70,73 +110,51 @@ class ReportGenerator:
         report.file.save(filename, ContentFile(pdf_bytes))
         report.save()
 
+        logger.info(f"Report generated: {report.id} - {filename}")
         return report
 
     @staticmethod
     def generate_excel_report(template, data, title, user, school):
-        """
-        Generate an Excel report from data
-        Returns: GeneratedReport instance
-        """
-        # Flatten nested data if needed
+        """Generate an Excel report from data"""
         flat_data = ReportGenerator._flatten_report_data(data)
-
-        # Create DataFrame
         df = pd.DataFrame(flat_data)
 
-        # Create Excel file in memory
         output = BytesIO()
         with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
             df.to_excel(writer, sheet_name="Report", index=False)
             workbook = writer.book
             worksheet = writer.sheets["Report"]
 
-            # Add some basic formatting
             header_format = workbook.add_format(
                 {
                     "bold": True,
                     "text_wrap": True,
                     "valign": "top",
-                    "fg_color": "#5a1b5d",  # Your purple color
+                    "fg_color": "#5a1b5d",
                     "font_color": "white",
                     "border": 1,
                 }
             )
 
-            # Write the column headers with the defined format
             for col_num, value in enumerate(df.columns.values):
                 worksheet.write(0, col_num, value, header_format)
 
-            # Auto-adjust columns' width
             for i, col in enumerate(df.columns):
-                max_len = (
-                    max(
-                        (
-                            df[col]
-                            .astype(str)
-                            .map(len)
-                            .max(),  # Length of largest item
-                            len(col),  # Length of column header/name
-                        )
-                    )
-                    + 1
-                )  # Adding a little extra space
+                max_len = max(df[col].astype(str).map(len).max(), len(col)) + 1
                 worksheet.set_column(i, i, max_len)
 
         excel_data = output.getvalue()
 
-        # Create report instance
         report = GeneratedReport(
             title=title,
             report_type=template,
             school=school,
             generated_by=user,
-            data=json.dumps(data),
+            data=json.dumps(data, cls=DecimalEncoder),
             parameters={},
             file_format="EXCEL",
         )
 
-        # Save Excel file
         filename = (
             f"{title.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         )
@@ -147,12 +165,9 @@ class ReportGenerator:
 
     @staticmethod
     def _flatten_report_data(data):
-        """
-        Helper to flatten nested report data for Excel export
-        """
+        """Helper to flatten nested report data for Excel export"""
         flat_data = []
 
-        # Handle student report data structure
         if "student" in data and "records" in data:
             student_data = data["student"]
             for record in data["records"]:
@@ -179,7 +194,6 @@ class ReportGenerator:
             user_agent=user_agent,
         )
 
-        # Update access record if this is a parent viewing
         if user.user_type == "parent":
             access_grant = GeneratedReportAccess.objects.filter(
                 report=report, user=user
@@ -204,36 +218,33 @@ def get_previous_term(current_term):
 def get_term_start_date(term, school_year):
     """Get start date for a term"""
     year = int(school_year.split("-")[0]) if "-" in school_year else int(school_year)
-
     if term == "Term 1":
         return datetime(year, 1, 10).date()
     elif term == "Term 2":
         return datetime(year, 5, 10).date()
-    else:  # Term 3
+    else:
         return datetime(year, 9, 10).date()
 
 
 def get_term_end_date(term, school_year):
     """Get end date for a term"""
     year = int(school_year.split("-")[0]) if "-" in school_year else int(school_year)
-
     if term == "Term 1":
         return datetime(year, 4, 5).date()
     elif term == "Term 2":
         return datetime(year, 8, 5).date()
-    else:  # Term 3
+    else:
         return datetime(year, 12, 15).date()
 
 
 def get_next_term_start_date(term, school_year):
     """Get start date for next term"""
     year = int(school_year.split("-")[0]) if "-" in school_year else int(school_year)
-
     if term == "Term 1":
         return datetime(year, 5, 10).date()
     elif term == "Term 2":
         return datetime(year, 9, 10).date()
-    else:  # Term 3
+    else:
         return datetime(year + 1, 1, 10).date()
 
 
@@ -242,7 +253,6 @@ def generate_report_for_student(
 ):
     """Generate a comprehensive academic report for a single student"""
     try:
-        # Get academic records with related data
         academic_records = (
             AcademicRecord.objects.filter(
                 student=student, term=term, school_year=school_year, is_published=True
@@ -262,7 +272,6 @@ def generate_report_for_student(
         max_marks = len(academic_records) * 100
         mean_mark = round(total_marks / len(academic_records), 2)
 
-        # Calculate total points (A=12, A-=11, B+=10, etc.)
         grade_points = {
             "A": 12,
             "A-": 11,
@@ -283,7 +292,7 @@ def generate_report_for_student(
         )
         max_points = len(academic_records) * 12
 
-        # Calculate overall grade based on mean
+        # Calculate overall grade
         if mean_mark >= 80:
             overall_grade = "A"
         elif mean_mark >= 75:
@@ -327,7 +336,6 @@ def generate_report_for_student(
             student.student_class.students.all() if student.student_class else []
         )
 
-        # Calculate stream position
         stream_rankings = []
         for s in class_students:
             s_records = AcademicRecord.objects.filter(
@@ -344,14 +352,15 @@ def generate_report_for_student(
         )
         stream_total = len(stream_rankings)
 
-        # Overall position (across all students in the year)
         all_students = Student.objects.filter(
             school=school, student_class__isnull=False
         )
         overall_rankings = []
         for s in all_students:
             s_records = AcademicRecord.objects.filter(
-                student=s, term=term, school_year=school_year
+                student=s,  # FIX: Changed from 's=s' to 'student=s'
+                term=term,
+                school_year=school_year,
             )
             if s_records.exists():
                 s_mean = sum(float(r.score) for r in s_records) / len(s_records)
@@ -364,10 +373,9 @@ def generate_report_for_student(
         )
         overall_total = len(overall_rankings)
 
-        # Prepare records data with rankings, deviations, and trends
+        # Prepare records data
         records_data = []
         for record in academic_records:
-            # Calculate subject-specific rankings
             subject_records = AcademicRecord.objects.filter(
                 subject=record.subject,
                 term=term,
@@ -382,14 +390,11 @@ def generate_report_for_student(
                 + 1
             )
             subject_total = subject_records.count()
-
-            # Calculate deviation and class average for this subject
             subject_class_avg = (
                 subject_records.aggregate(Avg("score"))["score__avg"] or 0
             )
             deviation = round(float(record.score) - float(subject_class_avg), 1)
 
-            # Calculate trend (compare to previous term if available)
             trend = "stable"
             previous_term = get_previous_term(term)
             if previous_term:
@@ -405,16 +410,16 @@ def generate_report_for_student(
                     elif float(record.score) < float(prev_record.score) - 5:
                         trend = "down"
                 except AcademicRecord.DoesNotExist:
-                    trend = "stable"
+                    pass
 
+            score_float = float(record.score)
             records_data.append(
                 {
                     "subject": record.subject.name,
-                    # Calculate component scores (20%, 20%, 60%)
-                    "entry_exam": int(record.score * 0.20),  # 20% of total
-                    "mid_term": int(record.score * 0.20),  # 20% of total
-                    "end_term": int(record.score * 0.60),  # 60% of total
-                    "score": int(record.score),
+                    "entry_exam": int(score_float * 0.20),
+                    "mid_term": int(score_float * 0.20),
+                    "end_term": int(score_float * 0.60),
+                    "score": int(score_float),
                     "grade": record.grade,
                     "deviation": deviation,
                     "rank": subject_rank,
@@ -428,42 +433,46 @@ def generate_report_for_student(
                 }
             )
 
-        # Get term dates
         term_end_date = get_term_end_date(term, school_year)
         next_term_start = get_next_term_start_date(term, school_year)
 
-        # Get class teacher info
         class_teacher_name = ""
         class_teacher_signature = None
         if student.student_class and student.student_class.class_teacher:
             ct = student.student_class.class_teacher
             class_teacher_name = ct.user.get_full_name()
             if hasattr(ct, "signature") and ct.signature:
-                class_teacher_signature = ct.signature.url
+                class_teacher_signature = os.path.join(
+                    settings.MEDIA_ROOT, ct.signature.name
+                )
 
-        # Get head of institution info
         head_name = ""
         head_signature = None
-        # Try to get primary admin first
         if hasattr(school, "primary_admin") and school.primary_admin:
             head_name = (
                 school.primary_admin.name
                 if hasattr(school.primary_admin, "name")
                 else f"{school.primary_admin.first_name} {school.primary_admin.last_name}"
             )
-            # Check for signature in different possible locations
-            if hasattr(school.primary_admin, "schooladmin") and hasattr(
-                school.primary_admin.schooladmin, "signature"
-            ):
-                if school.primary_admin.schooladmin.signature:
-                    head_signature = school.primary_admin.schooladmin.signature.url
-            elif hasattr(school.primary_admin, "administratorprofile") and hasattr(
-                school.primary_admin.administratorprofile, "signature"
-            ):
-                if school.primary_admin.administratorprofile.signature:
-                    head_signature = (
-                        school.primary_admin.administratorprofile.signature.url
-                    )
+
+        # CRITICAL: Get absolute file paths for images
+        school_logo_path = None
+        if school.logo:
+            school_logo_path = os.path.join(settings.MEDIA_ROOT, school.logo.name)
+            if not os.path.exists(school_logo_path):
+                logger.warning(f"School logo not found: {school_logo_path}")
+                school_logo_path = None
+            else:
+                logger.info(f"School logo found: {school_logo_path}")
+
+        student_photo_path = None
+        if hasattr(student, "photo") and student.photo:
+            student_photo_path = os.path.join(settings.MEDIA_ROOT, student.photo.name)
+            if not os.path.exists(student_photo_path):
+                logger.warning(f"Student photo not found: {student_photo_path}")
+                student_photo_path = None
+            else:
+                logger.info(f"Student photo found: {student_photo_path}")
 
         # Prepare report data
         report_data = {
@@ -474,7 +483,7 @@ def generate_report_for_student(
                 "phone": getattr(school, "phone", "N/A"),
                 "email": getattr(school, "email", "N/A"),
                 "website": getattr(school, "website", ""),
-                "logo": school.logo.url if school.logo else None,
+                "logo": school_logo_path,
             },
             "student": {
                 "full_name": student.full_name,
@@ -485,12 +494,7 @@ def generate_report_for_student(
                 "gender": getattr(student, "gender", "N/A"),
                 "upi": getattr(student, "upi", None),
                 "kcpe_marks": getattr(student, "kcpe_marks", None),
-                "vap": getattr(student, "vap", None),
-                "photo": (
-                    student.photo.url
-                    if hasattr(student, "photo") and student.photo
-                    else None
-                ),
+                "photo": student_photo_path,
             },
             "term": term,
             "school_year": school_year,
@@ -506,10 +510,12 @@ def generate_report_for_student(
             "overall_position": overall_position,
             "overall_total": overall_total,
             "class_teacher_name": class_teacher_name,
-            "class_teacher_comment": class_teacher_comment,
+            "class_teacher_comment": class_teacher_comment
+            or "Excellent performance. Keep up the good work!",
             "class_teacher_signature": class_teacher_signature,
-            "head_name": head_name,
-            "head_comment": head_comment,
+            "head_name": head_name or "Principal",
+            "head_comment": head_comment
+            or "Well done. Continue working hard to achieve your academic goals.",
             "head_signature": head_signature,
             "term_end_date": (
                 term_end_date.strftime("%d/%m/%Y") if term_end_date else ""
@@ -519,7 +525,6 @@ def generate_report_for_student(
             ),
         }
 
-        # Generate the report based on template preference
         title = f"{student.full_name} - {term} {school_year} Academic Report"
 
         if template.preferred_format == "PDF":

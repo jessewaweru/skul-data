@@ -45,6 +45,27 @@ class AcademicRecord(models.Model):
         null=True,
         help_text="Teacher's comments about performance in this specific subject",
     )
+    entry_score = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Entry exam score (typically 20%)",
+    )
+    mid_score = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Mid-term exam score (typically 20%)",
+    )
+    end_score = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="End-term exam score (typically 60%)",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_published = models.BooleanField(
