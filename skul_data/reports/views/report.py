@@ -570,6 +570,7 @@ def upload_performance(request):
     """
     Upload student performance data from CSV file.
     Creates or updates AcademicRecord entries.
+    Optionally triggers report generation after upload.
     """
     if "file" not in request.FILES:
         return Response(
@@ -581,6 +582,11 @@ def upload_performance(request):
     subject_code = request.data.get("subject_code")
     term = request.data.get("term", "Term 1")
     school_year = request.data.get("school_year", "2025")
+
+    # NEW: Option to auto-generate reports after upload
+    auto_generate_reports = (
+        request.data.get("auto_generate_reports", "false").lower() == "true"
+    )
 
     if not all([class_id, subject_code, term, school_year]):
         return Response(
@@ -678,6 +684,9 @@ def upload_performance(request):
                     defaults={
                         "teacher": teacher,
                         "score": Decimal(str(total_score)),
+                        "entry_score": Decimal(str(entry)),
+                        "mid_score": Decimal(str(mid)),
+                        "end_score": Decimal(str(end)),
                         "subject_comments": row.get("comments", ""),
                         "is_published": False,  # Not published until reviewed
                     },
@@ -704,17 +713,67 @@ def upload_performance(request):
                     }
                 )
 
-        # Return summary
-        return Response(
-            {
-                "created": created,
-                "updated": updated,
-                "errors": errors,
-                "total_processed": created + updated,
-                "message": f"Successfully processed {created + updated} records",
-            },
-            status=status.HTTP_200_OK,
+        # NEW: Check if all subjects have been uploaded for report generation
+        response_data = {
+            "created": created,
+            "updated": updated,
+            "errors": errors,
+            "total_processed": created + updated,
+            "message": f"Successfully processed {created + updated} records",
+        }
+
+        # Check readiness for report generation
+        school_class = SchoolClass.objects.get(id=class_id)
+        students = school_class.students.filter(is_active=True)
+
+        # Get all subjects for the school
+        all_subjects = Subject.objects.filter(school=teacher.school)
+
+        # Check how many subjects have records for this term
+        subjects_with_records = (
+            AcademicRecord.objects.filter(
+                student__in=students, term=term, school_year=school_year
+            )
+            .values("subject")
+            .distinct()
+            .count()
         )
+
+        response_data["subjects_completed"] = subjects_with_records
+        response_data["total_subjects"] = all_subjects.count()
+        response_data["ready_for_reports"] = (
+            subjects_with_records >= all_subjects.count()
+        )
+
+        # NEW: Auto-generate reports if requested and all subjects are complete
+        if auto_generate_reports and response_data["ready_for_reports"]:
+            try:
+                # Publish all records for this term (make them visible in reports)
+                AcademicRecord.objects.filter(
+                    student__in=students, term=term, school_year=school_year
+                ).update(is_published=True)
+
+                # Trigger report generation using Celery
+                from skul_data.reports.utils.tasks import (
+                    generate_class_term_reports_task,
+                )
+
+                task = generate_class_term_reports_task.delay(
+                    class_id=class_id,
+                    term=term,
+                    school_year=school_year,
+                    generated_by_id=user.id,
+                )
+
+                response_data["report_generation_task_id"] = str(task.id)
+                response_data["report_generation_status"] = "queued"
+                response_data["message"] += " Report generation has been queued."
+
+            except Exception as e:
+                response_data["report_generation_error"] = str(e)
+                response_data["report_generation_status"] = "failed"
+
+        return Response(response_data, status=status.HTTP_200_OK)
 
     except SchoolClass.DoesNotExist:
         return Response({"error": "Class not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -728,3 +787,132 @@ def upload_performance(request):
             {"error": f"Upload failed: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
+
+
+# NEW: Add endpoint to manually trigger report generation
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def generate_reports_for_class(request):
+    """
+    Manually trigger report generation for a class after all performance data is uploaded.
+    """
+    class_id = request.data.get("class_id")
+    term = request.data.get("term")
+    school_year = request.data.get("school_year")
+
+    if not all([class_id, term, school_year]):
+        return Response(
+            {"error": "class_id, term, and school_year are required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    user = request.user
+
+    try:
+        school_class = SchoolClass.objects.get(id=class_id)
+
+        # Permission check
+        if user.user_type == User.TEACHER:
+            teacher = user.teacher_profile
+            if school_class.class_teacher != teacher:
+                return Response(
+                    {
+                        "error": "You can only generate reports for your assigned classes"
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        # Check if all students have complete records
+        students = school_class.students.filter(is_active=True)
+        all_subjects = Subject.objects.filter(school=school_class.school)
+
+        incomplete_students = []
+        for student in students:
+            student_subjects = (
+                AcademicRecord.objects.filter(
+                    student=student, term=term, school_year=school_year
+                )
+                .values("subject")
+                .distinct()
+                .count()
+            )
+
+            if student_subjects < all_subjects.count():
+                incomplete_students.append(
+                    {
+                        "name": student.full_name,
+                        "subjects_completed": student_subjects,
+                        "subjects_required": all_subjects.count(),
+                    }
+                )
+
+        if incomplete_students:
+            return Response(
+                {
+                    "error": "Cannot generate reports. Some students have incomplete records.",
+                    "incomplete_students": incomplete_students,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Publish all records
+        AcademicRecord.objects.filter(
+            student__in=students, term=term, school_year=school_year
+        ).update(is_published=True)
+
+        # Trigger report generation
+        from skul_data.reports.utils.tasks import generate_class_term_reports_task
+
+        task = generate_class_term_reports_task.delay(
+            class_id=class_id,
+            term=term,
+            school_year=school_year,
+            generated_by_id=user.id,
+        )
+
+        return Response(
+            {
+                "message": "Report generation has been queued",
+                "task_id": str(task.id),
+                "class": school_class.name,
+                "term": term,
+                "school_year": school_year,
+                "total_students": students.count(),
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    except SchoolClass.DoesNotExist:
+        return Response(
+            {"error": "Class not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+    except Exception as e:
+        return Response(
+            {"error": f"Failed to queue report generation: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+
+
+# NEW: Add endpoint to check report generation status
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def check_report_generation_status(request, task_id):
+    """
+    Check the status of a report generation task.
+    """
+    from celery.result import AsyncResult
+
+    task = AsyncResult(task_id)
+
+    response_data = {
+        "task_id": task_id,
+        "status": task.state,
+    }
+
+    if task.state == "SUCCESS":
+        response_data["result"] = task.result
+    elif task.state == "FAILURE":
+        response_data["error"] = str(task.info)
+
+    return Response(response_data)

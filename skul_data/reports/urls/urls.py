@@ -15,8 +15,10 @@ from skul_data.reports.views.academic_record import (
     AcademicRecordViewSet,
 )
 from skul_data.reports.views.report import (
-    generate_performance_template,
+    generate_reports_for_class,
+    check_report_generation_status,
     upload_performance,
+    generate_performance_template,
 )
 
 router = DefaultRouter()
@@ -49,5 +51,15 @@ urlpatterns = router.urls + [
         name="generate-performance-template",
     ),
     path("upload-performance/", upload_performance, name="upload-performance"),
+    path(
+        "generate-reports-for-class/",
+        generate_reports_for_class,
+        name="generate-reports-for-class",
+    ),
+    path(
+        "check-report-status/<str:task_id>/",
+        check_report_generation_status,
+        name="check-report-status",
+    ),
     # Additional custom endpoints can be added here
 ]
