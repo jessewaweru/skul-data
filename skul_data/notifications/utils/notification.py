@@ -2,7 +2,10 @@
 from django.conf import settings
 from django.core.mail import EmailMessage
 from django.template.loader import render_to_string
-from twilio.rest import Client  # For SMS - optional if you won't use SMS
+import logging
+from skul_data.notifications.utils import sms_service
+
+logger = logging.getLogger(__name__)
 
 
 def send_parent_email_fees(parent, subject, message, context=None, attachment=None):
@@ -52,25 +55,23 @@ def send_parent_email_fees(parent, subject, message, context=None, attachment=No
 
 def send_parent_sms(parent, message, context=None):
     """
-    Send SMS to parent (requires Twilio or other SMS service configuration).
-    Optional - only implement if you need SMS functionality.
+    Wrapper function compatible with existing notification.py interface.
+    Can be used as a drop-in replacement.
+
+    Args:
+        parent: Parent model instance
+        message: SMS message text (will be formatted if context provided)
+        context: Dictionary for string formatting
     """
-    if not hasattr(settings, "TWILIO_ACCOUNT_SID"):
-        return False  # SMS not configured
+    if not parent or not hasattr(parent, "phone_number"):
+        logger.warning(f"Parent has no phone number: {parent}")
+        return False
 
     if context:
-        message = message.format(**context)
+        try:
+            message = message.format(**context)
+        except KeyError as e:
+            logger.error(f"Missing context key for SMS: {e}")
 
-    try:
-        client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-        client.messages.create(
-            body=message, from_=settings.TWILIO_PHONE_NUMBER, to=parent.phone_number
-        )
-        return True
-    except Exception as e:
-        # Log error
-        from django.utils.log import logging
-
-        logger = logging.getLogger(__name__)
-        logger.error(f"Failed to send SMS to {parent.phone_number}: {str(e)}")
-        return False
+    result = sms_service.send_sms(parent.phone_number, message)
+    return result.get("success", False)

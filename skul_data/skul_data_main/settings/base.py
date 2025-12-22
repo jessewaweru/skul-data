@@ -24,8 +24,6 @@ DEBUG = True
 
 ALLOWED_HOSTS = []
 
-# CORS_ALLOW_ALL_ORIGINS = True
-
 # CORS Configuration - Update these sections
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
@@ -75,12 +73,15 @@ PROJECT_APPS = [
 THIRD_PARTY_APPS = [
     "rest_framework",
     "rest_framework_simplejwt",
+    "rest_framework_simplejwt.token_blacklist",  # Add this for token blacklisting
     "drf_yasg",
     "django_celery_results",
     "django_celery_beat",
     "corsheaders",
     "channels",
     "django_filters",
+    "django_otp",
+    "django_otp.plugins.otp_totp",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + PROJECT_APPS + THIRD_PARTY_APPS
@@ -92,6 +93,11 @@ REST_FRAMEWORK = {
     ),
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 25,
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "100/hour",  # Anonymous users
+        "user": "1000/hour",  # Authenticated users
+        "password_reset": "3/hour",  # Password reset requests
+    },
 }
 
 AUTHENTICATION_BACKENDS = [
@@ -102,7 +108,7 @@ AUTHENTICATION_BACKENDS = [
 # JWT Settings - Update token lifetime for testing
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),  # Increased for better UX
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
     "UPDATE_LAST_LOGIN": True,
@@ -188,13 +194,6 @@ DATABASES = {
     }
 }
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
-
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
 
@@ -204,6 +203,9 @@ AUTH_PASSWORD_VALIDATORS = [
     },
     {
         "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "OPTIONS": {
+            "min_length": 8,
+        },
     },
     {
         "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
@@ -231,7 +233,6 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 MEDIA_URL = "/media/"
-# MEDIA_ROOT = PROJECT_ROOT / "media"
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 
 # Verify it's correct
@@ -241,16 +242,6 @@ print(f"MEDIA_ROOT is set to: {MEDIA_ROOT}")
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-
-SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=1),
-    "ROTATE_REFRESH_TOKENS": False,
-    "BLACKLIST_AFTER_ROTATION": False,
-    "ALGORITHM": "HS256",
-    "SIGNING_KEY": SECRET_KEY,
-    "AUTH_HEADER_TYPES": ("Bearer",),
-}
 
 SWAGGER_SETTINGS = {
     "SECURITY_DEFINITIONS": {
@@ -313,14 +304,11 @@ CELERY_BEAT_SCHEDULE = {
             hour=10, minute=0, day_of_week=1
         ),  # Every Monday at 10:00 AM
     },
+    "cleanup-expired-otps": {
+        "task": "skul_data.users.tasks.cleanup_expired_otps",
+        "schedule": crontab(hour=2, minute=0),  # Daily at 2:00 AM
+    },
 }
-
-# # Only enable eager mode during tests
-# if "test" in sys.argv:
-#     CELERY_TASK_ALWAYS_EAGER = True
-#     CELERY_TASK_EAGER_PROPAGATES = True
-#     print("\nRunning in TEST mode - Celery tasks will execute synchronously\n")
-
 
 # Add logging to debug authentication issues
 LOGGING = {
@@ -347,29 +335,64 @@ LOGGING = {
 
 X_FRAME_OPTIONS = "SAMEORIGIN"
 
-# For development - Console backend (emails will print to console)
-# Your incoming developer can change this to SMTP when ready for production
-EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+# ============================================================================
+# EMAIL CONFIGURATION
+# ============================================================================
 
-# When ready for production, your developer can uncomment and configure:
-# EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-# EMAIL_HOST = config('EMAIL_HOST', 'smtp.gmail.com')
-# EMAIL_PORT = config('EMAIL_PORT', 587)
-# EMAIL_USE_TLS = config('EMAIL_USE_TLS', True)
-# EMAIL_HOST_USER = config('EMAIL_HOST_USER', '')
-# EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', '')  # Use app-specific password for Gmail
-# DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', 'Skul Data <noreply@skuldata.com>')
+# Choose your email backend based on environment
+# For development/testing: Use console backend (emails print to terminal)
+# For production: Use SMTP backend with your email service
 
-# For now, set a default from email for console backend
-DEFAULT_FROM_EMAIL = "Skul Data <noreply@skuldata.com>"
+# DEVELOPMENT: Console Backend (prints emails to console)
+# Uncomment this for development/testing
+# EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 
-# Set to True when your developer configures Twilio
-ENABLE_SMS_NOTIFICATIONS = False
+# PRODUCTION: SMTP Backend
+# Uncomment and configure one of the options below for production
 
-# When ready for SMS, your developer can configure:
-# TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID', '')
-# TWILIO_AUTH_TOKEN = config('TWILIO_AUTH_TOKEN', '')
-# TWILIO_PHONE_NUMBER = config('TWILIO_PHONE_NUMBER', '')
+# # Option 1: Gmail SMTP
+# EMAIL_BACKEND = config("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+# EMAIL_HOST = config("EMAIL_HOST", "smtp.gmail.com")
+# EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
+# EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
+# EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
+# EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
+# DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", "Skul Data <noreply@skuldata.com>")
+
+# Option 2: Zoho ZeptoMail SMTP (uncomment to use)
+EMAIL_BACKEND = config("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = config("EMAIL_HOST", "smtp.zeptomail.com")
+EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
+EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
+EMAIL_HOST_USER = config(
+    "EMAIL_HOST_USER", "emailapikey"
+)  # ZeptoMail uses 'emailapikey' as username
+EMAIL_HOST_PASSWORD = config(
+    "EMAIL_HOST_PASSWORD", default=""
+)  # Your ZeptoMail API key
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", "Skul Data <noreply@yourdomain.com>")
+
+# Email timeout settings
+EMAIL_TIMEOUT = 10  # seconds
+
+# For production, also consider:
+# EMAIL_USE_SSL = False  # Use TLS instead of SSL for port 587
+# EMAIL_SSL_CERTFILE = None
+# EMAIL_SSL_KEYFILE = None
+
+# ============================================================================
+# SMS CONFIGURATION
+# ============================================================================
+
+# SMS Configuration
+AFRICASTALKING_USERNAME = config("AFRICASTALKING_USERNAME", default="")
+AFRICASTALKING_API_KEY = config("AFRICASTALKING_API_KEY", default="")
+
+# Enable SMS notifications
+ENABLE_SMS_NOTIFICATIONS = True
+
+# Frontend URL (for activation links)
+FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:5173")
 
 # ============================================================================
 # NOTIFICATION SETTINGS
@@ -379,6 +402,31 @@ ENABLE_SMS_NOTIFICATIONS = False
 NOTIFICATION_CHANNELS = {
     "database": True,  # Always enabled - stores notifications in DB
     "websocket": True,  # Real-time notifications (already working)
-    "email": True,  # Enabled but will use console backend for now
-    "sms": False,  # Disabled until Twilio is configured
+    "email": True,  # Email notifications (now configured)
+    "sms": False,  # SMS notifications (disabled until Twilio is configured)
 }
+
+# ============================================================================
+# SECURITY SETTINGS
+# ============================================================================
+
+# Password Reset Settings
+PASSWORD_RESET_TIMEOUT = 600  # 10 minutes (in seconds)
+PASSWORD_RESET_MAX_ATTEMPTS = 3  # Max OTP verification attempts
+
+# Account Lockout Settings (for future implementation)
+ACCOUNT_LOCKOUT_THRESHOLD = 5  # Failed login attempts before lockout
+ACCOUNT_LOCKOUT_DURATION = 1800  # 30 minutes (in seconds)
+
+# Session Security
+SESSION_COOKIE_AGE = 86400  # 24 hours
+SESSION_SAVE_EVERY_REQUEST = True
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+
+# For production, set these to True:
+# SESSION_COOKIE_SECURE = True
+# CSRF_COOKIE_SECURE = True
+# SECURE_SSL_REDIRECT = True
+# SECURE_HSTS_SECONDS = 31536000
+# SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+# SECURE_HSTS_PRELOAD = True

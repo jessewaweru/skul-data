@@ -4,7 +4,19 @@ from skul_data.users.views.parent import (
     ParentNotificationViewSet,
     ParentStatusChangeViewSet,
 )
-from skul_data.users.views.auth import SchoolRegisterAPIView, SchoolLoginAPIView
+from skul_data.users.views.auth import (
+    SchoolRegisterAPIView,
+    SchoolLoginAPIView,
+    activate_account,
+)
+from skul_data.users.views.password_reset import (
+    password_reset_request,
+    password_reset_verify,
+    password_reset_confirm,
+    change_password,
+    logout_view,
+    check_password_strength,
+)
 from rest_framework.routers import DefaultRouter
 from skul_data.users.views.role import RoleViewSet
 from skul_data.users.views.role import PermissionViewSet
@@ -49,10 +61,27 @@ router.register(
 )
 
 urlpatterns = [
-    # path("users/me/", UserViewSet.as_view({"get": "me"}), name="user-me"),
-    path("", include(router.urls)),
+    # Authentication endpoints
     path("register/", SchoolRegisterAPIView.as_view(), name="school-register"),
     path("login/", SchoolLoginAPIView.as_view(), name="login"),
+    path("logout/", logout_view, name="logout"),
+    # Password management endpoints
+    path(
+        "password-reset/request/", password_reset_request, name="password-reset-request"
+    ),
+    path("password-reset/verify/", password_reset_verify, name="password-reset-verify"),
+    path(
+        "password-reset/confirm/", password_reset_confirm, name="password-reset-confirm"
+    ),
+    path("change-password/", change_password, name="change-password"),
+    path(
+        "check-password-strength/",
+        check_password_strength,
+        name="check-password-strength",
+    ),
+    path("activate-account/<str:token>/", activate_account, name="activate-account"),
+    # Router URLs
+    path("", include(router.urls)),
     # Custom parent actions
     path(
         "parents/<int:pk>/change-status/",

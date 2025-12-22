@@ -78,6 +78,15 @@ class User(AbstractUser):
     EMAIL_FIELD = "email"
     REQUIRED_FIELDS = ["email"]  # Adjust as needed
 
+    # Verification fields
+    email_verified = models.BooleanField(default=False)
+    phone_number = models.CharField(max_length=20, blank=True, null=True)
+    phone_verified = models.BooleanField(default=False)
+
+    # Account activation
+    is_first_login = models.BooleanField(default=True)
+    password_change_required = models.BooleanField(default=False)
+
     # Add this line to use our custom manager
     objects = UserManager()
 

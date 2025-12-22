@@ -8,3 +8,6 @@ from .session import UserSession
 
 
 __all__ = ["User"]
+from .password_reset import PasswordResetOTP
+
+from .verification import EmailVerification, PhoneVerification, AccountActivation
