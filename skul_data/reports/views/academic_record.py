@@ -21,6 +21,8 @@ class AcademicRecordViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return AcademicRecord.objects.none()
 
         # Teachers only see records they created or for their students
         if self.request.user.user_type == "TEACHER":

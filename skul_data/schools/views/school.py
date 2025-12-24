@@ -32,6 +32,9 @@ class SchoolViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated()]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return School.objects.none()
+
         user = self.request.user
         if user.user_type == User.SCHOOL_ADMIN:
             return School.objects.filter(id=user.school_admin_profile.school.id)
@@ -54,6 +57,9 @@ class SchoolSubscriptionViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsPrimaryAdmin]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return SchoolSubscription.objects.none()
+
         return SchoolSubscription.objects.filter(
             school=self.request.user.school_admin_profile.school
         )

@@ -118,6 +118,10 @@ class KCSESubjectPerformance(models.Model):
     total_students = models.PositiveIntegerField()
     entered = models.PositiveIntegerField()
     passed = models.PositiveIntegerField()
+    year = models.PositiveIntegerField(
+        validators=[MinValueValidator(1989), MaxValueValidator(timezone.now().year)],
+        default=timezone.now().year,
+    )
     subject_teacher = models.ForeignKey(
         Teacher, on_delete=models.SET_NULL, null=True, blank=True
     )

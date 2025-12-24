@@ -457,7 +457,8 @@ class AnalyticsDashboardViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsSchoolAdmin]
 
     def get_queryset(self):
-        # Handle both school admin and administrator users
+        if getattr(self, "swagger_fake_view", False):
+            return AnalyticsDashboard.objects.none()
         user = self.request.user
         if user.user_type == User.SCHOOL_ADMIN:
             school = user.school_admin_profile.school

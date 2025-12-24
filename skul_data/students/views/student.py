@@ -91,6 +91,9 @@ class StudentViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return Student.objects.none()
+
         user = self.request.user
 
         if user.user_type == User.SCHOOL_ADMIN:
@@ -396,6 +399,8 @@ class StudentDocumentViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return StudentDocument.objects.none()
         user = self.request.user
 
         if user.user_type == User.SCHOOL_ADMIN:
@@ -447,6 +452,9 @@ class StudentNoteViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return StudentNote.objects.none()
+
         user = self.request.user
 
         if user.user_type == User.SCHOOL_ADMIN:
@@ -566,6 +574,9 @@ class StudentAttendanceViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return Student.objects.none()
+
         user = self.request.user
 
         if user.user_type == User.SCHOOL_ADMIN:

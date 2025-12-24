@@ -504,6 +504,9 @@ class ClassTimetableViewSet(viewsets.ModelViewSet):
     required_permission_delete = "manage_class_timetables"
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return ClassTimetable.objects.none()
+
         queryset = super().get_queryset()
         user = self.request.user
 
@@ -539,6 +542,9 @@ class ClassDocumentViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return ClassDocument.objects.none()
+
         queryset = super().get_queryset()
         user = self.request.user
 
@@ -630,6 +636,8 @@ class ClassAttendanceViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return ClassTimetable.objects.none()
         user = self.request.user
 
         if user.user_type == User.SCHOOL_ADMIN:

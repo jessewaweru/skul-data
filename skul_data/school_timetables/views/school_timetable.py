@@ -48,6 +48,8 @@ class TimeSlotViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return TimeSlot.objects.none()
         user = self.request.user
 
         if user.user_type == "school_admin":
@@ -76,6 +78,8 @@ class TimetableStructureViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return TimetableStructure.objects.none()
         user = self.request.user
 
         if user.user_type == "school_admin":
@@ -108,6 +112,8 @@ class TimetableViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return Timetable.objects.none()
         user = self.request.user
 
         if user.user_type == "school_admin":
@@ -703,6 +709,8 @@ class LessonViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return Lesson.objects.none()
         user = self.request.user
 
         if user.user_type == "school_admin":
@@ -774,6 +782,8 @@ class SubjectGroupViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return SubjectGroup.objects.none()
         user = self.request.user
 
         if user.user_type == "school_admin":
@@ -825,6 +835,8 @@ class TeacherAvailabilityViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return TeacherAvailability.objects.none()
         user = self.request.user
 
         if user.user_type == "school_admin":

@@ -37,6 +37,8 @@ class SchoolEventListView(generics.ListCreateAPIView):
     serializer_class = SchoolEventSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return SchoolEvent.objects.none()
         user = self.request.user
         school = user.school
 

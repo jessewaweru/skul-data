@@ -85,6 +85,8 @@ class ParentViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return Parent.objects.none()
         user = self.request.user
 
         # Get school from user
@@ -608,6 +610,8 @@ class ParentNotificationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = ParentNotification.objects.all()
+        if getattr(self, "swagger_fake_view", False):
+            return ParentNotification.objects.none()
         user = self.request.user
 
         if user.user_type == User.SCHOOL_ADMIN:

@@ -60,6 +60,8 @@ class ReportTemplateViewSet(viewsets.ModelViewSet):
         return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return ReportTemplate.objects.none()
         user = self.request.user
         if user.user_type == User.SCHOOL_ADMIN:
             return self.queryset
@@ -117,6 +119,8 @@ class GeneratedReportViewSet(viewsets.ModelViewSet):
         return [permissions.IsAuthenticated()]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return GeneratedReport.objects.none()
         user = self.request.user
         if user.user_type == User.SCHOOL_ADMIN:
             return self.queryset
@@ -280,6 +284,8 @@ class ReportScheduleViewSet(viewsets.ModelViewSet):
     filterset_fields = ["report_template", "frequency", "is_active", "school"]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return ReportSchedule.objects.none()
         user = self.request.user
         if user.user_type == User.SCHOOL_ADMIN:
             return self.queryset
@@ -327,6 +333,8 @@ class AcademicReportConfigViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdministrator]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return AcademicReportConfig.objects.none()
         user = self.request.user
         if user.user_type == User.SCHOOL_ADMIN:
             return self.queryset
@@ -355,6 +363,8 @@ class TermReportRequestViewSet(viewsets.ModelViewSet):
         return [IsAdministrator()]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return TermReportRequest.objects.none()
         user = self.request.user
         if user.user_type == User.SCHOOL_ADMIN:
             return self.queryset

@@ -414,6 +414,8 @@ class TeacherDocumentViewSet(viewsets.ModelViewSet):
         print(f"Query params: {self.request.query_params}")
 
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return TeacherDocument.objects.none()
         user = self.request.user
 
         # Debug: Print total documents in system

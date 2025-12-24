@@ -50,6 +50,8 @@ class FeeStructureViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return FeeStructure.objects.none()
         school = self.request.user.school
 
         if school:
@@ -111,6 +113,8 @@ class FeeRecordViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return FeeRecord.objects.none()
         school = self.request.user.school
 
         if school:
@@ -265,6 +269,8 @@ class FeePaymentViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return FeePayment.objects.none()
         school = self.request.user.school
 
         if school:
@@ -399,6 +405,8 @@ class FeeInvoiceTemplateViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return FeeInvoiceTemplate.objects.none()
         school = self.request.user.school
 
         if school:

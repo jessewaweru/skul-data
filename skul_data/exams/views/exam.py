@@ -57,6 +57,8 @@ class GradingSystemViewSet(viewsets.ModelViewSet):
     required_permission = "manage_grading_systems"
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return GradingSystem.objects.none()
         return super().get_queryset().filter(school=self.request.user.school)
 
     def perform_create(self, serializer):
@@ -99,68 +101,6 @@ class GradeRangeViewSet(viewsets.ModelViewSet):
         serializer.save(grading_system=grading_system)
 
 
-# class ExamViewSet(viewsets.ModelViewSet):
-#     queryset = Exam.objects.all()
-#     serializer_class = ExamSerializer
-#     permission_classes = [IsAuthenticated, HasRolePermission]
-#     required_permission = "manage_exams"
-#     filter_backends = [DjangoFilterBackend]
-#     filterset_fields = ["term", "academic_year", "school_class", "exam_type"]
-
-#     def get_queryset(self):
-#         return super().get_queryset().filter(school=self.request.user.school)
-
-#     def perform_create(self, serializer):
-#         serializer.save(created_by=self.request.user, school=self.request.user.school)
-
-#     @action(detail=True, methods=["post"])
-#     def publish(self, request, pk=None):
-#         exam = self.get_object()
-#         exam.is_published = True
-#         exam.save()
-
-#         # Publish all subjects if they haven't been published individually
-#         exam.subjects.filter(is_published=False).update(is_published=True)
-
-#         return Response({"status": "exam published"})
-
-#     @action(detail=True, methods=["post"])
-#     def generate_term_report(self, request, pk=None):
-#         exam = self.get_object()
-
-#         # Get all students in the class
-#         students = exam.school_class.class_students.filter(
-#             status="ACTIVE", is_active=True
-#         )
-
-#         for student in students:
-#             term_report, created = TermReport.objects.get_or_create(
-#                 student=student,
-#                 school_class=exam.school_class,
-#                 term=exam.term,
-#                 academic_year=exam.academic_year,
-#             )
-#             term_report.calculate_results()
-
-#         return Response({"status": "term reports generated"})
-
-#     @action(detail=False, methods=["get"])
-#     def terms(self, request):
-#         terms = self.get_queryset().values("term", "academic_year").distinct()
-#         return Response(list(terms))
-
-#     @action(detail=False, methods=["get"])
-#     def stats(self, request):
-#         from django.db.models import Count, Avg
-
-#         stats = self.get_queryset().aggregate(
-#             total=Count("id"),
-#             published=Count("id", filter=Q(is_published=True)),
-#             upcoming=Count("id", filter=Q(status="Upcoming")),
-#         )
-#         return Response(stats)
-
-
 class ExamViewSet(viewsets.ModelViewSet):
     queryset = Exam.objects.all()
     serializer_class = ExamSerializer
@@ -170,6 +110,8 @@ class ExamViewSet(viewsets.ModelViewSet):
     filterset_fields = ["term", "academic_year", "school_class", "exam_type"]
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return Exam.objects.none()
         return super().get_queryset().filter(school=self.request.user.school)
 
     def perform_create(self, serializer):
@@ -579,6 +521,8 @@ class ExamSubjectViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset
+        if getattr(self, "swagger_fake_view", False):
+            return ExamSubject.objects.none()
 
         # Filter by exam if provided
         exam_id = self.request.query_params.get("exam")
@@ -646,6 +590,8 @@ class ExamResultViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset
+        if getattr(self, "swagger_fake_view", False):
+            return ExamResult.objects.none()
 
         # Filter by exam subject if provided
         exam_subject_id = self.request.query_params.get("exam_subject")
@@ -711,6 +657,8 @@ class ExamConsolidationRuleViewSet(viewsets.ModelViewSet):
     required_permission = "manage_exams"
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return ExamConsolidationRule.objects.none()
         return self.queryset.filter(school=self.request.user.school)
 
     def perform_create(self, serializer):

@@ -35,6 +35,8 @@ class SchoolAdminViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+        if getattr(self, "swagger_fake_view", False):
+            return SchoolAdmin.objects.none()
         if not self.request.user.user_type == User.SCHOOL_ADMIN:
             # Only show admins from the same school
             qs = qs.filter(school=self.request.user.school_admin_profile.school)

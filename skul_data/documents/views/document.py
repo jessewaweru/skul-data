@@ -355,6 +355,8 @@ class DocumentShareLinkViewSet(viewsets.ModelViewSet):
     serializer_class = DocumentShareLinkSerializer
 
     def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return DocumentShareLink.objects.none()
         return super().get_queryset().filter(created_by=self.request.user)
 
     def perform_create(self, serializer):
